@@ -10,10 +10,17 @@ const environmentSchema = z.object({
   ),
   FRONTEND_ORIGIN: z.url().default('http://localhost:5173'),
   GOOGLE_API_KEY: z.string().min(1),
-  GOOGLE_MODEL: z.string().min(1).default('gemini-2.5-flash'),
+  GOOGLE_MODEL: z.string().min(1).optional(),
+  GEMINI_MODEL: z.string().min(1).optional(),
+  GEMINI_FALLBACK_MODEL: z.string().min(1).default('gemini-2.0-flash-lite'),
   LLM_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(300_000).default(90_000),
   GITHUB_TOKEN: z.string().optional(),
   PORT: z.coerce.number().int().positive().default(3000),
 });
 
-export const env = environmentSchema.parse(process.env);
+const parsed = environmentSchema.parse(process.env);
+
+export const env = {
+  ...parsed,
+  GEMINI_MODEL: parsed.GEMINI_MODEL ?? parsed.GOOGLE_MODEL ?? 'gemini-2.0-flash',
+};

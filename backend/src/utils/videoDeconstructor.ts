@@ -2,6 +2,7 @@ import path from 'node:path';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { FileState, GoogleAIFileManager } from '@google/generative-ai/server';
 import { env } from '../config/env.js';
+import { withGeminiQuotaFallback } from './llmClient.js';
 import { isYouTubeHost, normalizeYouTubeUrl } from './youtubeUrl.js';
 
 export { isYouTubeHost, normalizeYouTubeUrl };
@@ -65,11 +66,12 @@ If the video has no reusable WebGL/GSAP motion, say so in one sentence.`;
 
 export async function deconstructVideoSource(sourceUri: string, isYouTube = false): Promise<string> {
   const genAI = new GoogleGenerativeAI(env.GOOGLE_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const primaryModel = genAI.getGenerativeModel({ model: env.GEMINI_MODEL });
+  const fallbackModel = genAI.getGenerativeModel({ model: env.GEMINI_FALLBACK_MODEL });
 
   if (isYouTube) {
     const youtubeUrl = normalizeYouTubeUrl(sourceUri);
-    const result = await model.generateContent([
+    const prompt = [
       {
         fileData: {
           fileUri: youtubeUrl,
@@ -77,7 +79,11 @@ export async function deconstructVideoSource(sourceUri: string, isYouTube = fals
         },
       },
       { text: `${deconstructionPrompt}\n\nSource: ${youtubeUrl}` },
-    ]);
+    ];
+    const result = await withGeminiQuotaFallback(
+      () => primaryModel.generateContent(prompt),
+      () => fallbackModel.generateContent(prompt),
+    );
     return result.response.text().trim();
   }
 
@@ -90,7 +96,7 @@ export async function deconstructVideoSource(sourceUri: string, isYouTube = fals
 
   try {
     const activeFile = await waitForActiveFile(fileManager, uploaded.file.name);
-    const result = await model.generateContent([
+    const prompt = [
       {
         fileData: {
           fileUri: activeFile.uri,
@@ -98,7 +104,11 @@ export async function deconstructVideoSource(sourceUri: string, isYouTube = fals
         },
       },
       { text: `${deconstructionPrompt}\n\nSource: uploaded video ${path.basename(sourceUri)}` },
-    ]);
+    ];
+    const result = await withGeminiQuotaFallback(
+      () => primaryModel.generateContent(prompt),
+      () => fallbackModel.generateContent(prompt),
+    );
     return result.response.text().trim();
   } finally {
     try {

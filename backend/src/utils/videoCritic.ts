@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { FileState, GoogleAIFileManager } from '@google/generative-ai/server';
 import { env } from '../config/env.js';
+import { withGeminiQuotaFallback } from './llmClient.js';
 
 const POLL_INTERVAL_MS = 4_000;
 const MAX_WAIT_MS = 120_000;
@@ -49,8 +50,7 @@ export async function reviewSceneVideo(videoPath: string, designPlan: string): P
   try {
     const activeFile = await waitForActiveFile(fileManager, uploaded.file.name);
     const genAI = new GoogleGenerativeAI(env.GOOGLE_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const result = await withModelTimeout(model.generateContent([
+    const prompt = [
       {
         fileData: {
           fileUri: activeFile.uri,
@@ -80,7 +80,15 @@ Check:
 Design plan and review context:
 ${designPlan}`,
       },
-    ]));
+    ];
+    const result = await withGeminiQuotaFallback(
+      () => withModelTimeout(
+        genAI.getGenerativeModel({ model: env.GEMINI_MODEL }).generateContent(prompt),
+      ),
+      () => withModelTimeout(
+        genAI.getGenerativeModel({ model: env.GEMINI_FALLBACK_MODEL }).generateContent(prompt),
+      ),
+    );
 
     return result.response.text().trim();
   } finally {

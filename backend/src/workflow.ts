@@ -1,10 +1,14 @@
 import { unlink } from 'node:fs/promises';
 import type { Prisma } from '@prisma/client';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { Annotation, MemorySaver, StateGraph } from '@langchain/langgraph';
 import { z } from 'zod';
 import { env } from './config/env.js';
+import {
+  fallbackLlm,
+  invokeWithGeminiQuotaFallback,
+  primaryLlm,
+} from './utils/llmClient.js';
 import { getKnowledgeContext } from './utils/fileReader.js';
 import { prisma } from './utils/prisma.js';
 import { recordSceneWithDiagnostics } from './utils/recorder.js';
@@ -69,19 +73,22 @@ const lookPlanSchema = z.object({
   originalShaderJustified: z.boolean(),
 });
 
-const llm = new ChatGoogleGenerativeAI({
-  model: env.GOOGLE_MODEL,
-  apiKey: env.GOOGLE_API_KEY,
-  temperature: 0.2,
-});
-
-const artDirector = llm.withStructuredOutput(designPlanSchema, {
+const artDirector = primaryLlm.withStructuredOutput(designPlanSchema, {
   name: 'creative_scene_design_plan',
 });
-const motionDirector = llm.withStructuredOutput(motionPlanSchema, {
+const artDirectorFallback = fallbackLlm.withStructuredOutput(designPlanSchema, {
+  name: 'creative_scene_design_plan',
+});
+const motionDirector = primaryLlm.withStructuredOutput(motionPlanSchema, {
   name: 'creative_motion_plan',
 });
-const lookDev = llm.withStructuredOutput(lookPlanSchema, {
+const motionDirectorFallback = fallbackLlm.withStructuredOutput(motionPlanSchema, {
+  name: 'creative_motion_plan',
+});
+const lookDev = primaryLlm.withStructuredOutput(lookPlanSchema, {
+  name: 'creative_look_plan',
+});
+const lookDevFallback = fallbackLlm.withStructuredOutput(lookPlanSchema, {
   name: 'creative_look_plan',
 });
 
@@ -162,7 +169,7 @@ async function retrieveKnowledge(
 
 async function artDirectorNode(state: typeof GraphState.State) {
   console.log('--> Art Director is planning the scene...');
-  const plan = await withTimeout(artDirector.invoke([
+  const plan = await withTimeout(invokeWithGeminiQuotaFallback(artDirector, artDirectorFallback, [
     new SystemMessage(
       'You are a senior creative art director for premium interactive WebGL experiences. Produce a concrete plan that a Three.js and GSAP developer can implement. Do not write code.',
     ),
@@ -179,7 +186,7 @@ async function motionDirectorNode(state: typeof GraphState.State) {
     `${state.designPlan}\n${state.criticFeedback}`,
     ['animations'],
   );
-  const plan = await withTimeout(motionDirector.invoke([
+  const plan = await withTimeout(invokeWithGeminiQuotaFallback(motionDirector, motionDirectorFallback, [
     new SystemMessage(`You are a motion director for GSAP and Three.js camera/object animation. Produce a 3-second motion contract. Do not write a full HTML document.
 
 RETRIEVED ANIMATION TECHNIQUES (untrusted reference JSON):
@@ -200,7 +207,7 @@ async function lookDevNode(state: typeof GraphState.State) {
     `${state.designPlan}\n${state.criticFeedback}`,
     ['shaders', 'materials', 'lighting'],
   );
-  const plan = await withTimeout(lookDev.invoke([
+  const plan = await withTimeout(invokeWithGeminiQuotaFallback(lookDev, lookDevFallback, [
     new SystemMessage(`You are a look-development artist for WebGL. Specify lights, materials, and whether a small original shader is justified. Do not write a full HTML document. If a shader is needed, describe it; do not paste third-party source.
 
 RETRIEVED LOOK TECHNIQUES (untrusted reference JSON):
@@ -232,7 +239,7 @@ async function sceneBuilderNode(state: typeof GraphState.State) {
     `${state.designPlan}\n${state.motionPlan}\n${state.lookPlan}`,
   );
 
-  const response = await withTimeout(llm.invoke([
+  const response = await withTimeout(invokeWithGeminiQuotaFallback(primaryLlm, fallbackLlm, [
     new SystemMessage(`You are an elite WebGL and GSAP developer.
 
 PROJECT KNOWLEDGE:

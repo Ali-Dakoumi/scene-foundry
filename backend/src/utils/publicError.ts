@@ -1,8 +1,10 @@
+import { isGeminiQuotaError } from './llmClient.js';
+
 export function publicErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
 
-  if (/429|Too Many Requests|quota|rate[- ]limit/i.test(message)) {
-    return 'Gemini quota is exhausted for this API key and model. In backend/.env set GOOGLE_MODEL=gemini-2.5-flash (or another model with remaining quota) and restart the backend, or wait for the daily reset.';
+  if (isGeminiQuotaError(error)) {
+    return 'Gemini rate limit or quota is exhausted. Set GEMINI_MODEL and GEMINI_FALLBACK_MODEL in backend/.env to models with remaining quota, or wait for the daily reset.';
   }
 
   if (
