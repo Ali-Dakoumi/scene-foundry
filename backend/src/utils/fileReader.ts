@@ -10,20 +10,12 @@ export function getKnowledgeContext(): string {
   const knowledgeDirectory = getKnowledgeDirectory();
   const rules = readFileSync(path.join(knowledgeDirectory, 'rules.md'), 'utf8');
   const snippets = readFileSync(path.join(knowledgeDirectory, 'threejs-snippets.ts'), 'utf8');
-  const curatedPatterns = readFileSync(
-    path.join(knowledgeDirectory, 'sources', 'codrops-patterns.md'),
-    'utf8',
-  );
-
   cachedKnowledge = [
     '--- CORE RULES ---',
     rules.trim(),
     '',
     '--- SMALL STARTER EXAMPLE ---',
     snippets.trim(),
-    '',
-    '--- CURATED CREATIVE PATTERNS ---',
-    curatedPatterns.trim(),
   ].join('\n');
 
   return cachedKnowledge;

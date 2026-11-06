@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  filterTechniquesByCategory,
   formatKnowledgeContext,
   getKnowledgeSearchTerms,
   selectRelevantTechniques,
@@ -66,4 +67,11 @@ test('caps retrieval count and formatted context size', () => {
 
 test('returns an empty JSON array when no stored techniques are available', () => {
   assert.equal(formatKnowledgeContext([]), '[]');
+});
+
+test('category filter returns only animation techniques when asked', () => {
+  const selected = filterTechniquesByCategory(techniques, ['animations']);
+  assert.deepEqual(selected.map(({ title }) => title), ['Scroll-linked typography']);
+  const ranked = selectRelevantTechniques(techniques, [], 4, ['animations']);
+  assert.deepEqual(ranked.map(({ category }) => category), ['animations']);
 });

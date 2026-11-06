@@ -1,36 +1,19 @@
-import { existsSync } from 'node:fs';
-import puppeteer, { type Browser, type Page } from 'puppeteer';
+import type { Browser, Page } from 'puppeteer';
+import { launchSceneBrowser } from './browser.js';
 import type { SceneDiagnostic } from './sceneValidator.js';
+
+export type { SceneDiagnostic };
 
 export interface SceneRenderResult {
   screenshotBase64: string;
   diagnostics: SceneDiagnostic[];
 }
 
-const windowsBrowserPaths = [
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-];
-
-function getSystemBrowserPath(): string | undefined {
-  const configuredPath = process.env.PUPPETEER_EXECUTABLE_PATH?.trim();
-  if (configuredPath) return configuredPath;
-  if (process.platform !== 'win32') return undefined;
-  return windowsBrowserPaths.find((candidate) => existsSync(candidate));
-}
-
 export async function renderScene(htmlContent: string): Promise<SceneRenderResult> {
   let browser: Browser | null = null;
 
   try {
-    const executablePath = getSystemBrowserPath();
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--disable-dev-shm-usage'],
-      ...(executablePath ? { executablePath } : {}),
-    });
+    browser = await launchSceneBrowser();
     const page = await browser.newPage();
     const diagnostics = collectPageDiagnostics(page);
     await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
@@ -44,7 +27,7 @@ export async function renderScene(htmlContent: string): Promise<SceneRenderResul
   }
 }
 
-function collectPageDiagnostics(page: Page): SceneDiagnostic[] {
+export function collectPageDiagnostics(page: Page): SceneDiagnostic[] {
   const diagnostics: SceneDiagnostic[] = [];
 
   page.on('console', (message) => {
@@ -78,7 +61,7 @@ function collectPageDiagnostics(page: Page): SceneDiagnostic[] {
   return diagnostics;
 }
 
-async function inspectRenderedScene(page: Page): Promise<SceneDiagnostic[]> {
+export async function inspectRenderedScene(page: Page): Promise<SceneDiagnostic[]> {
   const result = await page.evaluate(() => {
     const canvases = Array.from(document.querySelectorAll('canvas'));
     const visibleCanvases = canvases.filter((canvas) => {
@@ -111,3 +94,5 @@ function deduplicateDiagnostics(diagnostics: SceneDiagnostic[]): SceneDiagnostic
   }
   return [...unique.values()];
 }
+
+export { deduplicateDiagnostics };

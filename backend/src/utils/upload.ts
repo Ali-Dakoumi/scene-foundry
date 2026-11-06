@@ -30,3 +30,18 @@ export const upload = multer({
     callback(null, true);
   },
 });
+
+const knowledgeVideoExtensions = new Set(['.mp4', '.webm']);
+
+export const knowledgeVideoUpload = multer({
+  storage,
+  limits: { fileSize: 40 * 1024 * 1024, files: 1 },
+  fileFilter: (_request, file, callback) => {
+    const extension = path.extname(file.originalname).toLowerCase();
+    if (!knowledgeVideoExtensions.has(extension)) {
+      callback(new Error(`Unsupported knowledge video type: ${extension || 'unknown'}`));
+      return;
+    }
+    callback(null, true);
+  },
+});

@@ -35,12 +35,23 @@ function scoreTechnique(item: KnowledgeTechnique, terms: readonly string[]): num
   ), 0);
 }
 
+export function filterTechniquesByCategory(
+  items: readonly KnowledgeTechnique[],
+  categories?: readonly string[],
+): KnowledgeTechnique[] {
+  if (!categories || categories.length === 0) return [...items];
+  const allowed = new Set(categories.map((category) => category.toLowerCase()));
+  return items.filter((item) => allowed.has(item.category.toLowerCase()));
+}
+
 export function selectRelevantTechniques(
   items: readonly KnowledgeTechnique[],
   terms: readonly string[],
   limit = MAX_RETRIEVED_TECHNIQUES,
+  categories?: readonly string[],
 ): KnowledgeTechnique[] {
-  const ranked = items
+  const scoped = filterTechniquesByCategory(items, categories);
+  const ranked = scoped
     .map((item, index) => ({ item, index, score: scoreTechnique(item, terms) }))
     .filter(({ score }) => terms.length === 0 || score > 0)
     .sort((left, right) => right.score - left.score || left.index - right.index);

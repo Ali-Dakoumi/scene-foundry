@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { unlink } from 'node:fs/promises';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import multer from 'multer';
@@ -8,7 +9,10 @@ import { agentApp, GraphState } from './workflow.js';
 import { Librarian } from './utils/librarian.js';
 import { MAX_REVIEW_ITERATIONS } from './utils/agentQuality.js';
 import { prisma } from './utils/prisma.js';
-import { upload, uploadsDirectory } from './utils/upload.js';
+import { publicErrorMessage } from './utils/publicError.js';
+import { knowledgeVideoUpload, upload, uploadsDirectory } from './utils/upload.js';
+import { deconstructVideoSource } from './utils/videoDeconstructor.js';
+import { isYouTubeHost, normalizeYouTubeUrl } from './utils/youtubeUrl.js';
 
 const app = express();
 const librarian = new Librarian();
@@ -16,9 +20,10 @@ const ingestionRateLimit = new Map<string, { count: number; resetAt: number }>()
 const generationRequestSchema = z.object({
   prompt: z.string().trim().min(1).max(4_000),
   threadId: z.uuid().optional(),
+  parentProjectId: z.uuid().optional(),
 });
 const knowledgeIngestionSchema = z.object({
-  url: z.string().trim().url().max(2_048),
+  url: z.string().trim().url().max(2_048).optional(),
   category: z.string().trim().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/i).optional(),
 });
 const projectListQuerySchema = z.object({
@@ -64,7 +69,14 @@ function limitKnowledgeIngestion(request: Request, response: Response, next: Nex
 }
 
 app.disable('x-powered-by');
-app.use(cors({ origin: env.FRONTEND_ORIGIN }));
+app.use(cors({
+  origin: [...new Set([
+    env.FRONTEND_ORIGIN,
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175',
+  ])],
+}));
 app.use(express.json({ limit: '1mb' }));
 app.use('/assets', express.static(uploadsDirectory, { fallthrough: false, maxAge: '1d' }));
 
@@ -131,87 +143,91 @@ app.post('/api/upload', upload.single('asset'), (request, response): void => {
   });
 });
 
-app.post('/api/knowledge/ingest', limitKnowledgeIngestion, async (request, response): Promise<void> => {
-  const parsedRequest = knowledgeIngestionSchema.safeParse(request.body);
-  if (!parsedRequest.success) {
-    response.status(400).json({
-      error: 'Invalid knowledge ingestion request.',
-      details: z.flattenError(parsedRequest.error).fieldErrors,
-    });
-    return;
-  }
-
-  const submittedUrl = new URL(parsedRequest.data.url);
-  if (
-    submittedUrl.protocol !== 'https:'
-    || submittedUrl.username
-    || submittedUrl.password
-    || (submittedUrl.port && submittedUrl.port !== '443')
-  ) {
-    response.status(400).json({ error: 'Provide a public HTTPS source URL without credentials.' });
-    return;
-  }
-
-  const sourceUrl = new URL(submittedUrl);
-  sourceUrl.search = '';
-  sourceUrl.hash = '';
-  let rawContent: string;
-
-  try {
-    if (submittedUrl.hostname.toLowerCase() === 'github.com') {
-      const segments = submittedUrl.pathname.split('/').filter(Boolean).map(decodeURIComponent);
-      if (segments.length < 2 || (segments.length > 2 && segments[2] !== 'tree')) {
-        response.status(400).json({
-          error: 'Use a GitHub repository URL, optionally followed by /tree/{branch}/{subpath}.',
-        });
-        return;
-      }
-
-      const owner = segments[0];
-      const repo = segments[1]?.replace(/\.git$/i, '');
-      if (!owner || !repo) {
-        response.status(400).json({ error: 'The GitHub repository URL is invalid.' });
-        return;
-      }
-      const branch = segments[2] === 'tree' ? segments[3] : undefined;
-      const subPath = segments[2] === 'tree' ? segments.slice(4).join('/') : undefined;
-      if (segments[2] === 'tree' && !branch) {
-        response.status(400).json({ error: 'A branch name is required after /tree/.' });
-        return;
-      }
-
-      const repositoryUrl = new URL(`https://github.com/${owner}/${repo}`);
-      if (branch) repositoryUrl.pathname += `/tree/${encodeURIComponent(branch)}`;
-      if (subPath) repositoryUrl.pathname += `/${subPath.split('/').map(encodeURIComponent).join('/')}`;
-      sourceUrl.href = repositoryUrl.href;
-      rawContent = (await librarian.fetchGitHubRepo(owner, repo, subPath, branch)).join('\n\n');
-    } else {
-      rawContent = await librarian.fetchWebDoc(submittedUrl.href);
+app.post(
+  '/api/knowledge/ingest',
+  limitKnowledgeIngestion,
+  (request: Request, response: Response, next: NextFunction): void => {
+    const contentType = request.headers['content-type'] ?? '';
+    if (contentType.includes('multipart/form-data')) {
+      knowledgeVideoUpload.single('video')(request, response, next);
+      return;
     }
-
-    const distilledItems = await librarian.distill(rawContent, sourceUrl.href);
-    if (distilledItems.length === 0) {
-      response.status(422).json({ error: 'No reusable WebGL or GSAP techniques were found.' });
+    next();
+  },
+  async (request, response): Promise<void> => {
+    const parsedRequest = knowledgeIngestionSchema.safeParse({
+      url: typeof request.body?.url === 'string' && request.body.url.trim()
+        ? request.body.url.trim()
+        : undefined,
+      category: typeof request.body?.category === 'string' && request.body.category.trim()
+        ? request.body.category.trim()
+        : undefined,
+    });
+    if (!parsedRequest.success) {
+      response.status(400).json({
+        error: 'Invalid knowledge ingestion request.',
+        details: z.flattenError(parsedRequest.error).fieldErrors,
+      });
       return;
     }
 
-    const knowledgeItems = distilledItems.map((item) => ({
-      ...item,
-      category: parsedRequest.data.category ?? item.category,
-      sourceUrl: sourceUrl.href,
-    }));
-    await librarian.saveKnowledge(knowledgeItems);
+    const uploadedVideo = request.file;
+    if (!uploadedVideo && !parsedRequest.data.url) {
+      response.status(400).json({
+        error: 'Provide a public HTTPS source URL or upload an .mp4/.webm video.',
+      });
+      return;
+    }
 
-    response.status(201).json({
-      success: true,
-      count: knowledgeItems.length,
-      items: knowledgeItems.map(({ title, category }) => ({ title, category })),
-    });
-  } catch (error) {
-    console.error('Knowledge ingestion failed:', error);
-    response.status(502).json({ error: 'Knowledge ingestion failed. Check the source URL and try again.' });
-  }
-});
+    try {
+      const { rawContent, sourceUrl } = uploadedVideo
+        ? await ingestUploadedVideo(uploadedVideo.path, uploadedVideo.filename)
+        : await ingestFromUrl(parsedRequest.data.url!);
+
+      const distilledItems = await librarian.distill(rawContent, sourceUrl);
+      if (distilledItems.length === 0) {
+        response.status(422).json({ error: 'No reusable WebGL or GSAP techniques were found.' });
+        return;
+      }
+
+      const knowledgeItems = distilledItems.map((item) => ({
+        ...item,
+        category: parsedRequest.data.category ?? item.category,
+        sourceUrl,
+      }));
+      await librarian.saveKnowledge(knowledgeItems);
+
+      response.status(201).json({
+        success: true,
+        count: knowledgeItems.length,
+        items: knowledgeItems.map(({ title, category }) => ({ title, category })),
+      });
+    } catch (error) {
+      console.error('Knowledge ingestion failed:', error);
+      if (error instanceof Error && /HTTP 429|rate limit/i.test(error.message)) {
+        response.status(429).json({ error: 'The source is rate-limited. Try again later.' });
+        return;
+      }
+      if (error instanceof Error && /timed out/i.test(error.message)) {
+        response.status(504).json({ error: 'The source took too long to respond.' });
+        return;
+      }
+      if (error instanceof Error && /invalid|only public|youtube|github|credentials|unsupported/i.test(error.message)) {
+        response.status(400).json({ error: error.message });
+        return;
+      }
+      response.status(502).json({ error: 'Knowledge ingestion failed. Check the source URL and try again.' });
+    } finally {
+      if (uploadedVideo?.path) {
+        try {
+          await unlink(uploadedVideo.path);
+        } catch {
+          // Upload remains gitignored.
+        }
+      }
+    }
+  },
+);
 
 app.post('/api/generate', async (request: Request, response: Response): Promise<void> => {
   const parsedRequest = generationRequestSchema.safeParse(request.body);
@@ -223,11 +239,28 @@ app.post('/api/generate', async (request: Request, response: Response): Promise<
     return;
   }
 
-  const { prompt } = parsedRequest.data;
+  const { prompt, parentProjectId } = parsedRequest.data;
   const threadId = parsedRequest.data.threadId ?? randomUUID();
-  const project = await prisma.project.create({
-    data: { prompt, finalCode: '' },
-  });
+  const parentProject = parentProjectId
+    ? await prisma.project.findUnique({
+      where: { id: parentProjectId },
+      select: { finalCode: true },
+    })
+    : null;
+  if (parentProjectId && (!parentProject || !parentProject.finalCode)) {
+    response.status(404).json({ error: 'The project to iterate from was not found.' });
+    return;
+  }
+  let project;
+  try {
+    project = await prisma.project.create({
+      data: { prompt, finalCode: '', parentProjectId: parentProjectId ?? null },
+    });
+  } catch (error) {
+    console.error('Failed to create project:', error);
+    response.status(500).json({ error: publicErrorMessage(error) });
+    return;
+  }
 
   response.status(200);
   response.setHeader('Content-Type', 'text/event-stream');
@@ -237,6 +270,9 @@ app.post('/api/generate', async (request: Request, response: Response): Promise<
   response.flushHeaders();
 
   const controller = new AbortController();
+  const heartbeat = setInterval(() => {
+    if (!response.writableEnded) response.write(': keep-alive\n\n');
+  }, 15_000);
   let responseCompleted = false;
   let finalCode = '';
   let finalIterations = 0;
@@ -247,6 +283,7 @@ app.post('/api/generate', async (request: Request, response: Response): Promise<
   response.on('close', () => {
     if (!responseCompleted) controller.abort();
   });
+  response.on('error', () => controller.abort());
 
   const sendEvent = (event: string, data: unknown): void => {
     if (!response.writableEnded) {
@@ -261,11 +298,15 @@ app.post('/api/generate', async (request: Request, response: Response): Promise<
       {
         userPrompt: prompt,
         designPlan: '',
-        generatedCode: '',
+        motionPlan: '',
+        lookPlan: '',
+        generatedCode: parentProject?.finalCode ?? '',
         screenshotBase64: '',
         criticFeedback: '',
+        criticNotes: '',
         runtimeDiagnostics: '',
         reviewApproved: false,
+        videoPath: '',
         iterations: 0,
       },
       {
@@ -288,8 +329,11 @@ app.post('/api/generate', async (request: Request, response: Response): Promise<
           phase: getNodePhase(node, value),
           iterations: finalIterations,
           approved: value.reviewApproved,
-          feedback: node === 'critic' ? value.criticFeedback : undefined,
-          diagnostics: node === 'critic' ? value.runtimeDiagnostics : undefined,
+          feedback: node === 'motionCritic' || node === 'technicalGate' ? value.criticFeedback : undefined,
+          notes: specialistNote(node, value),
+          diagnostics: node === 'technicalGate' || node === 'motionCritic'
+            ? value.runtimeDiagnostics
+            : undefined,
         });
       }
     }
@@ -316,10 +360,11 @@ app.post('/api/generate', async (request: Request, response: Response): Promise<
       console.error('Agent workflow failed:', error);
       sendEvent('error', {
         projectId: project.id,
-        message: error instanceof Error ? error.message : 'Generation failed.',
+        message: publicErrorMessage(error),
       });
     }
   } finally {
+    clearInterval(heartbeat);
     responseCompleted = true;
     response.end();
   }
@@ -332,7 +377,7 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
   }
   if (error instanceof Error) {
     console.error(error);
-    response.status(400).json({ error: error.message });
+    response.status(500).json({ error: publicErrorMessage(error) });
     return;
   }
   response.status(500).json({ error: 'Unexpected server error.' });
@@ -351,13 +396,96 @@ const shutdown = async (): Promise<void> => {
 process.once('SIGINT', () => { void shutdown(); });
 process.once('SIGTERM', () => { void shutdown(); });
 
+async function ingestUploadedVideo(
+  videoPath: string,
+  filename: string,
+): Promise<{ rawContent: string; sourceUrl: string }> {
+  const markdown = await deconstructVideoSource(videoPath, false);
+  if (!markdown) throw new Error('The uploaded video produced no motion notes.');
+  return {
+    rawContent: markdown,
+    sourceUrl: `uploaded-video://${filename}`,
+  };
+}
+
+async function ingestFromUrl(rawUrl: string): Promise<{ rawContent: string; sourceUrl: string }> {
+  const submittedUrl = new URL(rawUrl);
+  if (
+    submittedUrl.protocol !== 'https:'
+    || submittedUrl.username
+    || submittedUrl.password
+    || (submittedUrl.port && submittedUrl.port !== '443')
+  ) {
+    throw new Error('Provide a public HTTPS source URL without credentials.');
+  }
+
+  if (isYouTubeHost(submittedUrl.hostname)) {
+    const youtubeUrl = normalizeYouTubeUrl(submittedUrl.href);
+    const markdown = await deconstructVideoSource(youtubeUrl, true);
+    if (!markdown) throw new Error('The YouTube video produced no motion notes.');
+    return { rawContent: markdown, sourceUrl: youtubeUrl };
+  }
+
+  const sourceUrl = new URL(submittedUrl);
+  sourceUrl.search = '';
+  sourceUrl.hash = '';
+
+  if (submittedUrl.hostname.toLowerCase() === 'github.com') {
+    const segments = submittedUrl.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    if (segments.length < 2 || (segments.length > 2 && segments[2] !== 'tree')) {
+      throw new Error('Use a GitHub repository URL, optionally followed by /tree/{branch}/{subpath}.');
+    }
+
+    const owner = segments[0];
+    const repo = segments[1]?.replace(/\.git$/i, '');
+    if (!owner || !repo) {
+      throw new Error('The GitHub repository URL is invalid.');
+    }
+    const branch = segments[2] === 'tree' ? segments[3] : undefined;
+    const subPath = segments[2] === 'tree' ? segments.slice(4).join('/') : undefined;
+    if (segments[2] === 'tree' && !branch) {
+      throw new Error('A branch name is required after /tree/.');
+    }
+
+    const repositoryUrl = new URL(`https://github.com/${owner}/${repo}`);
+    if (branch) repositoryUrl.pathname += `/tree/${encodeURIComponent(branch)}`;
+    if (subPath) repositoryUrl.pathname += `/${subPath.split('/').map(encodeURIComponent).join('/')}`;
+    return {
+      rawContent: (await librarian.fetchGitHubRepo(owner, repo, subPath, branch)).join('\n\n'),
+      sourceUrl: repositoryUrl.href,
+    };
+  }
+
+  return {
+    rawContent: await librarian.fetchWebDoc(submittedUrl.href),
+    sourceUrl: sourceUrl.href,
+  };
+}
+
+function specialistNote(node: string, update: GraphUpdate): string | undefined {
+  if (node === 'artDirector' && update.designPlan) return 'Art direction locked.';
+  if (node === 'specialists') return 'Motion and look contracts ready.';
+  if (node === 'motionDirector' && update.motionPlan) return 'Motion plan updated.';
+  if (node === 'lookDev' && update.lookPlan) return 'Look plan updated.';
+  if (node === 'motionCritic' || node === 'technicalGate') return update.criticFeedback;
+  return undefined;
+}
+
 function getNodePhase(node: string, update: GraphUpdate): string {
   if (node === 'artDirector') return 'Design plan ready';
+  if (node === 'specialists') return 'Motion and look plans ready';
+  if (node === 'motionDirector') return 'Motion plan ready';
+  if (node === 'lookDev') return 'Look ready';
   if (node === 'sceneBuilder') return 'Scene implementation ready';
-  if (node === 'critic') {
-    return update.criticFeedback?.trim().toUpperCase() === 'APPROVED'
-      ? 'Critic approved the scene'
-      : 'Critic requested revisions';
+  if (node === 'technicalGate') {
+    return update.runtimeDiagnostics?.includes('[ERROR')
+      ? 'Technical checks failed'
+      : 'Technical checks passed';
+  }
+  if (node === 'motionCritic') {
+    return update.reviewApproved || update.criticFeedback?.trim().toUpperCase() === 'APPROVED'
+      ? 'Motion critic approved the scene'
+      : 'Motion critic requested revisions';
   }
   return 'Workflow updated';
 }

@@ -8,10 +8,13 @@ datasource db {
 }
 
 model Project {
-  id        String   @id @default(uuid())
-  prompt    String
-  finalCode String   @default("")
-  createdAt DateTime @default(now())
+  id              String   @id @default(uuid())
+  prompt          String
+  finalCode       String   @default("")
+  parentProjectId String?
+  createdAt       DateTime @default(now())
+
+  @@index([parentProjectId])
 }
 
 model KnowledgeItem {
