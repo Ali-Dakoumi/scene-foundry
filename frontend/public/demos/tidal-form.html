@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#111313" />
+    <title>Tidal Form — Scene Foundry Study 01</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        background: #111313;
+        color: #f0eee7;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+        --muted: #9c9e98;
+        --acid: #d3f26a;
+        --line: rgb(240 238 231 / 18%);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { width: 100%; min-width: 320px; min-height: 100%; margin: 0; }
+      body { min-height: 100svh; overflow: hidden; }
+      button, a { color: inherit; font: inherit; }
+      a:focus-visible, button:focus-visible { outline: 2px solid var(--acid); outline-offset: 4px; }
+
+      .scene { position: fixed; inset: 0; width: 100%; height: 100%; }
+      .layout {
+        position: relative;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        min-height: 100svh;
+        padding: clamp(1.25rem, 3vw, 3rem);
+        pointer-events: none;
+      }
+      .topline, .bottomline { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+      .topline { border-bottom: 1px solid var(--line); padding-bottom: 1rem; }
+      .mark, .index, .eyebrow, .note, .toggle, .credit {
+        font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+        font-size: .68rem;
+        letter-spacing: .11em;
+        line-height: 1.5;
+        text-transform: uppercase;
+      }
+      .mark { color: var(--acid); font-weight: 700; }
+      .index, .note, .credit { color: var(--muted); }
+      .hero {
+        align-self: center;
+        width: min(100%, 34rem);
+        margin-top: -1rem;
+      }
+      .eyebrow { color: var(--acid); }
+      h1 {
+        max-width: 8ch;
+        margin: 1.1rem 0 1.25rem;
+        font-size: clamp(4rem, 11vw, 9.5rem);
+        font-weight: 500;
+        letter-spacing: -.09em;
+        line-height: .78;
+      }
+      h1 span { color: var(--acid); font-family: Georgia, serif; font-weight: 400; font-style: italic; }
+      .note { max-width: 23rem; margin: 0; letter-spacing: .035em; text-transform: none; }
+      .bottomline { align-items: end; border-top: 1px solid var(--line); padding-top: 1rem; }
+      .credit { max-width: 34rem; font-size: .58rem; letter-spacing: .045em; text-transform: none; }
+      .credit a { pointer-events: auto; text-decoration-color: var(--acid); text-underline-offset: .2em; }
+      .toggle {
+        display: inline-flex;
+        min-height: 2.8rem;
+        align-items: center;
+        gap: .8rem;
+        padding: .7rem .9rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #111313;
+        color: var(--acid);
+        cursor: pointer;
+        pointer-events: auto;
+        transition: border-color 180ms ease, background 180ms ease, color 180ms ease;
+      }
+      .toggle:hover { border-color: var(--acid); background: var(--acid); color: #111313; }
+      .toggle:disabled { cursor: not-allowed; opacity: .6; }
+      .toggle span:first-child { font-size: 1.1rem; line-height: 1; }
+
+      @media (max-width: 640px) {
+        .hero { width: min(100%, 26rem); }
+        h1 { font-size: clamp(4rem, 18vw, 7rem); }
+        .bottomline { align-items: start; flex-direction: column-reverse; }
+        .credit { max-width: 28rem; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas class="scene" aria-hidden="true"></canvas>
+    <main class="layout">
+      <header class="topline">
+        <span class="mark">Scene Foundry</span>
+        <span class="index">Material study / 001</span>
+      </header>
+      <section class="hero" aria-labelledby="title">
+        <p class="eyebrow">Soft body / procedural light</p>
+        <h1 id="title">Tidal <span>form</span></h1>
+        <p class="note">A small study in movement: one surface, a shifting field, and a little tension at the edges.</p>
+      </section>
+      <footer class="bottomline">
+        <p class="credit">
+          Original study informed by
+          <a href="https://github.com/codrops/WebGLBlobs" target="_blank" rel="noreferrer">Codrops' shader experiments</a>
+          and
+          <a href="https://github.com/codrops/ScrollBasedLayoutAnimations" target="_blank" rel="noreferrer">layout motion patterns</a>.
+        </p>
+        <button class="toggle" type="button" aria-pressed="false">
+          <span aria-hidden="true">↗</span>
+          <span>Disturb the surface</span>
+        </button>
+      </footer>
+    </main>
+    <script type="module">
+      import * as THREE from 'https://esm.sh/three';
+      import gsap from 'https://esm.sh/gsap';
+
+      const canvas = document.querySelector('.scene');
+      const button = document.querySelector('.toggle');
+      const buttonLabel = button.querySelector('span:last-child');
+      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+      renderer.setSize(innerWidth, innerHeight);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.1, 50);
+      camera.position.set(0, 0, 4.7);
+
+      const uniforms = {
+        uTime: { value: 0 },
+        uEnergy: { value: 0.7 },
+        uPointer: { value: new THREE.Vector2(0, 0) },
+      };
+
+      const material = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: `
+          uniform float uTime;
+          uniform float uEnergy;
+          uniform vec2 uPointer;
+          varying float vField;
+          varying vec3 vNormalView;
+
+          void main() {
+            float time = uTime * 0.55;
+            float field =
+              sin(position.y * 3.1 + time) * cos(position.x * 2.4 - time * 0.7) * 0.075 +
+              sin((position.z + position.x) * 3.8 + time * 0.6) * 0.035;
+            field += dot(normal.xy, uPointer) * 0.08;
+
+            vec3 displaced = position + normal * field * uEnergy;
+            float twist = sin(uv.y * 6.283 + time * 0.35) * 0.11;
+            float c = cos(twist);
+            float s = sin(twist);
+            displaced.xz = mat2(c, -s, s, c) * displaced.xz;
+
+            vField = field * uEnergy;
+            vNormalView = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying float vField;
+          varying vec3 vNormalView;
+
+          void main() {
+            vec3 normal = normalize(vNormalView);
+            float light = max(dot(normal, normalize(vec3(-0.45, 0.55, 1.0))), 0.0);
+            float rim = pow(1.0 - abs(normal.z), 2.1);
+            float bands = smoothstep(-0.07, 0.1, vField);
+            vec3 deep = vec3(0.055, 0.16, 0.19);
+            vec3 tide = vec3(0.25, 0.78, 0.65);
+            vec3 color = mix(deep, tide, bands);
+            color += vec3(0.73, 0.48, 0.9) * rim * 0.75;
+            color *= 0.72 + light * 0.55;
+            gl_FragColor = vec4(color, 1.0);
+          }
+        `,
+      });
+
+      const form = new THREE.Mesh(new THREE.SphereGeometry(1.12, 128, 96), material);
+      form.position.set(0.55, -0.05, 0);
+      scene.add(form);
+
+      const render = () => {
+        if (!reducedMotion) uniforms.uTime.value += 0.012;
+        renderer.render(scene, camera);
+        window.__SCENE_READY__ = true;
+        if (!reducedMotion) requestAnimationFrame(render);
+      };
+      render();
+
+      if (!reducedMotion) {
+        gsap.from(form.scale, { x: 0.65, y: 0.65, z: 0.65, duration: 1.5, ease: 'elastic.out(1, 0.55)' });
+        gsap.from('.hero > *, .topline, .bottomline', {
+          y: 18,
+          autoAlpha: 0,
+          duration: 0.8,
+          stagger: 0.07,
+          ease: 'power3.out',
+          delay: 0.12,
+        });
+      }
+
+      addEventListener('pointermove', (event) => {
+        const pointer = new THREE.Vector2(
+          (event.clientX / innerWidth) * 2 - 1,
+          1 - (event.clientY / innerHeight) * 2,
+        );
+        if (reducedMotion) {
+          uniforms.uPointer.value.copy(pointer);
+          renderer.render(scene, camera);
+          return;
+        }
+        gsap.to(uniforms.uPointer.value, { x: pointer.x, y: pointer.y, duration: 0.65, ease: 'power3.out', overwrite: true });
+        gsap.to(form.rotation, { y: pointer.x * 0.18, x: -pointer.y * 0.12, duration: 0.9, ease: 'power3.out', overwrite: true });
+      }, { passive: true });
+
+      button.addEventListener('click', () => {
+        const active = button.getAttribute('aria-pressed') !== 'true';
+        button.setAttribute('aria-pressed', String(active));
+        buttonLabel.textContent = active ? 'Settle the surface' : 'Disturb the surface';
+        const nextEnergy = active ? 1.65 : 0.7;
+        if (reducedMotion) {
+          uniforms.uEnergy.value = nextEnergy;
+          renderer.render(scene, camera);
+        } else {
+          gsap.to(uniforms.uEnergy, { value: nextEnergy, duration: 1.1, ease: 'power2.inOut' });
+        }
+      });
+
+      addEventListener('resize', () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.render(scene, camera);
+      });
+
+      addEventListener('pagehide', () => {
+        form.geometry.dispose();
+        material.dispose();
+        renderer.dispose();
+      }, { once: true });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id        String   @id @default(uuid())
+  prompt    String
+  finalCode String   @default("")
+  createdAt DateTime @default(now())
+}
+
+model KnowledgeItem {
+  id          String   @id @default(uuid())
+  title       String
+  category    String
+  sourceUrl   String
+  summary     String
+  codeSnippet String
+  createdAt   DateTime @default(now())
+
+  @@index([category, createdAt])
+}

@@ -1,0 +1,6 @@
+CREATE TABLE "Project" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "prompt" TEXT NOT NULL,
+    "finalCode" TEXT NOT NULL DEFAULT '',
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

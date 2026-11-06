@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0c0e" />
+    <title>Scene Foundry</title>
+  </head>
+  <body>
+    <div id="app">
+      <div class="page-wrapper" data-template="generator">
+      <aside class="workspace-panel" aria-label="Agent workspace">
+        <header class="panel-header">
+          <a class="wordmark" href="/" aria-label="Scene Foundry home">Scene Foundry</a>
+          <nav class="panel-links" aria-label="Workspace links">
+            <a class="text-link" href="/gallery.html">Projects</a>
+            <a class="text-link" href="/demos/tidal-form.html" target="_blank" rel="noopener noreferrer">Study 01</a>
+          </nav>
+        </header>
+        <section class="conversation" aria-labelledby="conversation-title">
+          <div class="conversation-heading"><h1 id="conversation-title">Build a world.</h1><p>Describe an interactive scene. Two agents will art-direct it, then write the WebGL.</p></div>
+          <div id="chat-history" class="chat-history" role="log" aria-live="polite"><div class="message message--agent"><span class="message-label">Studio</span><p>What should we make today?</p></div></div>
+        </section>
+        <form id="prompt-form" class="composer">
+          <label for="prompt">Scene brief</label>
+          <textarea id="prompt" name="prompt" placeholder="A glass planet orbiting a warm sun..." maxlength="2000" required></textarea>
+          <div class="asset-row">
+            <label class="asset-control" for="asset-upload"><span aria-hidden="true">+</span><span class="asset-label-text">Attach asset</span></label>
+            <input id="asset-upload" type="file" accept="image/*,.glb,.gltf,.obj,.fbx,.svg" />
+          </div>
+          <section class="knowledge-ingestion" aria-labelledby="knowledge-ingestion-title">
+            <h2 id="knowledge-ingestion-title">Teach the librarian</h2>
+            <label for="knowledge-url">GitHub repository or documentation URL</label>
+            <div class="knowledge-ingestion-row">
+              <input id="knowledge-url" type="url" inputmode="url" autocomplete="url" placeholder="https://github.com/owner/repo" />
+              <button id="ingest-knowledge" type="button">Ingest source</button>
+            </div>
+            <p id="knowledge-status" role="status" aria-live="polite"></p>
+            <ul id="knowledge-results" aria-label="Newly learned techniques"></ul>
+          </section>
+          <div class="composer-footer"><span><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span><button id="generate-btn" type="submit"><span class="button-label">Generate scene</span><span class="button-arrow" aria-hidden="true">&#8599;</span></button></div>
+        </form>
+      </aside>
+      <main class="preview-shell">
+        <header class="preview-header"><div><span class="preview-kicker">Live output</span><strong id="preview-status">Waiting for a brief</strong></div><button id="reload-preview" class="icon-button" type="button" aria-label="Reload preview" disabled>&#8635;</button></header>
+        <div class="preview-stage"><div id="empty-state" class="empty-state"><span class="empty-mark" aria-hidden="true">S/F</span><p>Your generated scene will appear here.</p></div><iframe id="preview-frame" title="Generated scene preview" sandbox="allow-scripts"></iframe></div>
+      </main>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

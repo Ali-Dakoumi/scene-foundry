@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+backend/public/uploads/*
+!backend/public/uploads/.gitkeep
