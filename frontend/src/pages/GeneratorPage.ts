@@ -19,7 +19,13 @@ export class GeneratorPage extends Page {
   private emptyState!: HTMLDivElement;
   private previewStatus!: HTMLElement;
   private reloadBtn!: HTMLButtonElement;
+  private downloadBtn!: HTMLButtonElement;
+  private speedControl!: HTMLInputElement;
+  private hueControl!: HTMLInputElement;
+  private wireframeControl!: HTMLInputElement;
   private knowledgeUrl!: HTMLInputElement;
+  private knowledgeVideo!: HTMLInputElement;
+  private knowledgeVideoLabel!: HTMLElement;
   private ingestButton!: HTMLButtonElement;
   private knowledgeStatus!: HTMLParagraphElement;
   private knowledgeResults!: HTMLUListElement;
@@ -27,6 +33,7 @@ export class GeneratorPage extends Page {
   private generating = false;
   private ingesting = false;
   private releaseGenerationScroll: (() => void) | null = null;
+  private parentProjectId: string | undefined;
 
   constructor() {
     super({
@@ -90,12 +97,20 @@ export class GeneratorPage extends Page {
     this.emptyState = this.select<HTMLDivElement>('#empty-state');
     this.previewStatus = this.select<HTMLElement>('#preview-status');
     this.reloadBtn = this.select<HTMLButtonElement>('#reload-preview');
+    this.downloadBtn = this.select<HTMLButtonElement>('#download-scene');
+    this.speedControl = this.select<HTMLInputElement>('#control-speed');
+    this.hueControl = this.select<HTMLInputElement>('#control-hue');
+    this.wireframeControl = this.select<HTMLInputElement>('#control-wireframe');
     this.knowledgeUrl = this.select<HTMLInputElement>('#knowledge-url');
+    this.knowledgeVideo = this.select<HTMLInputElement>('#knowledge-video');
+    this.knowledgeVideoLabel = this.select<HTMLElement>('#knowledge-video-label');
     this.ingestButton = this.select<HTMLButtonElement>('#ingest-knowledge');
     this.knowledgeStatus = this.select<HTMLParagraphElement>('#knowledge-status');
     this.knowledgeResults = this.select<HTMLUListElement>('#knowledge-results');
     const reusedPrompt = new URL(window.location.href).searchParams.get('prompt');
     if (reusedPrompt) this.promptInput.value = reusedPrompt;
+    const projectId = new URL(window.location.href).searchParams.get('project');
+    if (projectId) void this.loadParentProject(projectId);
   }
 
   protected override addEventListeners(): void {
@@ -103,8 +118,13 @@ export class GeneratorPage extends Page {
     this.listen(this.promptInput, 'keydown', this.handlePromptKeydown);
     this.listen(this.assetUpload, 'change', this.handleUpload);
     this.listen(this.reloadBtn, 'click', this.handleReload);
+    this.listen(this.downloadBtn, 'click', this.handleDownload);
+    this.listen(this.speedControl, 'input', this.handleControlChange);
+    this.listen(this.hueControl, 'input', this.handleControlChange);
+    this.listen(this.wireframeControl, 'change', this.handleControlChange);
     this.listen(this.ingestButton, 'click', this.handleIngest);
     this.listen(this.knowledgeUrl, 'keydown', this.handleKnowledgeKeydown);
+    this.listen(this.knowledgeVideo, 'change', this.handleKnowledgeVideo);
   }
 
   protected override onDestroy(): void {
@@ -135,12 +155,37 @@ export class GeneratorPage extends Page {
     });
   };
 
+  private readonly handleDownload = (): void => {
+    if (!this.latestCode) return;
+    const url = URL.createObjectURL(new Blob([this.latestCode], { type: 'text/html;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `scene-foundry-${new Date().toISOString().slice(0, 10)}.html`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  private readonly handleControlChange = (): void => {
+    this.previewFrame.contentWindow?.postMessage({
+      type: 'scene-foundry:controls',
+      controls: {
+        speed: Number(this.speedControl.value),
+        hue: Number(this.hueControl.value),
+        wireframe: this.wireframeControl.checked,
+      },
+    }, '*');
+  };
+
   private readonly handleUpload = (event: Event): void => {
     void this.uploadAsset(event);
   };
 
   private readonly handleIngest = (): void => {
     void this.ingestKnowledge();
+  };
+
+  private readonly handleKnowledgeVideo = (): void => {
+    void this.ingestKnowledgeVideo();
   };
 
   private readonly handleKnowledgeKeydown = (event: Event): void => {
@@ -152,10 +197,15 @@ export class GeneratorPage extends Page {
 
   private async ingestKnowledge(): Promise<void> {
     const url = this.knowledgeUrl.value.trim();
+    const video = this.knowledgeVideo.files?.[0];
+    if (video) {
+      await this.ingestKnowledgeVideo();
+      return;
+    }
     if (!url || this.ingesting) {
       if (!url) {
         this.knowledgeStatus.dataset.state = 'error';
-        this.knowledgeStatus.textContent = 'Enter a GitHub repository or documentation URL.';
+        this.knowledgeStatus.textContent = 'Enter a GitHub, documentation, or YouTube URL, or choose a video.';
       }
       this.knowledgeUrl.focus();
       return;
@@ -165,34 +215,74 @@ export class GeneratorPage extends Page {
     this.setIngestionState(true);
     this.knowledgeResults.replaceChildren();
     this.knowledgeStatus.dataset.state = 'loading';
-    this.knowledgeStatus.textContent = 'Librarian is extracting and distilling code...';
+    this.knowledgeStatus.textContent = 'Librarian is extracting motion and distilling techniques...';
 
     try {
       const result = await this.api.ingestKnowledge(url, undefined, this.signal);
-      if (!this.isCreated) return;
-
-      for (const item of result.items) {
-        const row = document.createElement('li');
-        const title = document.createElement('strong');
-        const category = document.createElement('span');
-        title.textContent = item.title;
-        category.textContent = item.category;
-        row.append(title, category);
-        this.knowledgeResults.append(row);
-      }
-      this.knowledgeStatus.dataset.state = 'success';
-      this.knowledgeStatus.textContent = `Librarian learned ${result.count} reusable pattern${result.count === 1 ? '' : 's'}.`;
+      this.renderIngestionResult(result);
       this.knowledgeUrl.value = '';
     } catch (error) {
-      if (!this.isCreated || this.isAbortError(error)) return;
-      this.knowledgeStatus.dataset.state = 'error';
-      this.knowledgeStatus.textContent = error instanceof Error
-        ? error.message
-        : 'Could not ingest this source.';
+      this.showIngestionError(error);
     } finally {
       this.ingesting = false;
       if (this.isCreated) this.setIngestionState(false);
     }
+  }
+
+  private async ingestKnowledgeVideo(): Promise<void> {
+    const file = this.knowledgeVideo.files?.[0];
+    if (!file || this.ingesting) {
+      if (!file && !this.knowledgeUrl.value.trim()) {
+        this.knowledgeStatus.dataset.state = 'error';
+        this.knowledgeStatus.textContent = 'Choose an .mp4 or .webm file, or enter a URL.';
+      }
+      return;
+    }
+
+    this.ingesting = true;
+    this.setIngestionState(true);
+    this.knowledgeResults.replaceChildren();
+    this.knowledgeStatus.dataset.state = 'loading';
+    this.knowledgeStatus.textContent = 'Librarian is deconstructing the video timeline...';
+    this.knowledgeVideoLabel.textContent = `Reading ${file.name}`;
+
+    try {
+      const result = await this.api.ingestKnowledgeVideo(file, undefined, this.signal);
+      this.renderIngestionResult(result);
+      this.knowledgeUrl.value = '';
+      this.knowledgeVideo.value = '';
+    } catch (error) {
+      this.showIngestionError(error);
+    } finally {
+      this.ingesting = false;
+      if (this.isCreated) {
+        this.setIngestionState(false);
+        this.knowledgeVideoLabel.textContent = 'Or ingest .mp4 / .webm';
+      }
+    }
+  }
+
+  private renderIngestionResult(result: { count: number; items: Array<{ title: string; category: string }> }): void {
+    if (!this.isCreated) return;
+    for (const item of result.items) {
+      const row = document.createElement('li');
+      const title = document.createElement('strong');
+      const category = document.createElement('span');
+      title.textContent = item.title;
+      category.textContent = item.category;
+      row.append(title, category);
+      this.knowledgeResults.append(row);
+    }
+    this.knowledgeStatus.dataset.state = 'success';
+    this.knowledgeStatus.textContent = `Librarian learned ${result.count} reusable pattern${result.count === 1 ? '' : 's'}.`;
+  }
+
+  private showIngestionError(error: unknown): void {
+    if (!this.isCreated || this.isAbortError(error)) return;
+    this.knowledgeStatus.dataset.state = 'error';
+    this.knowledgeStatus.textContent = error instanceof Error
+      ? error.message
+      : 'Could not ingest this source.';
   }
 
   private async uploadAsset(event: Event): Promise<void> {
@@ -235,6 +325,7 @@ export class GeneratorPage extends Page {
         prompt,
         (event) => this.handleGenerationEvent(event),
         this.signal,
+        this.parentProjectId,
       );
       if (!this.isCreated) return;
 
@@ -243,6 +334,7 @@ export class GeneratorPage extends Page {
       this.previewFrame.classList.add('is-visible');
       this.emptyState.classList.add('is-hidden');
       this.reloadBtn.disabled = false;
+      this.downloadBtn.disabled = false;
       const hasRuntimeErrors = result.diagnostics.includes('[ERROR');
       this.previewStatus.textContent = hasRuntimeErrors
         ? 'Rendered with issues'
@@ -284,8 +376,43 @@ export class GeneratorPage extends Page {
     if (event.type === 'status') {
       this.previewStatus.textContent = event.data.phase;
       if (event.data.diagnostics?.includes('[ERROR')) {
-        this.previewStatus.textContent = 'Critic reviewing runtime issues';
+        this.previewStatus.textContent = 'Technical checks found runtime issues';
       }
+      if (event.data.notes) {
+        const label = event.data.node === 'motionCritic'
+          ? 'Motion critic'
+          : event.data.node === 'technicalGate'
+            ? 'Technical'
+            : event.data.node === 'lookDev'
+              ? 'Look Dev'
+              : event.data.node === 'motionDirector'
+                ? 'Motion'
+                : 'Studio';
+        this.appendMessage(
+          event.data.diagnostics?.includes('[ERROR') ? 'error' : 'agent',
+          label,
+          event.data.notes,
+        );
+      }
+    }
+  }
+
+  private async loadParentProject(id: string): Promise<void> {
+    try {
+      const project = await this.api.getProject(id, this.signal);
+      if (!this.isCreated) return;
+      this.parentProjectId = project.id;
+      this.latestCode = project.finalCode;
+      this.previewFrame.srcdoc = project.finalCode;
+      this.previewFrame.classList.add('is-visible');
+      this.emptyState.classList.add('is-hidden');
+      this.reloadBtn.disabled = false;
+      this.downloadBtn.disabled = false;
+      this.previewStatus.textContent = 'Ready to iterate';
+      this.appendMessage('agent', 'Fork', 'Loaded the previous scene. Describe the change you want.');
+    } catch (error) {
+      if (!this.isCreated || this.isAbortError(error)) return;
+      this.appendMessage('error', 'Fork', error instanceof Error ? error.message : 'Could not load the project.');
     }
   }
 
@@ -307,6 +434,7 @@ export class GeneratorPage extends Page {
 
   private setIngestionState(isIngesting: boolean): void {
     this.knowledgeUrl.disabled = isIngesting;
+    this.knowledgeVideo.disabled = isIngesting;
     this.ingestButton.disabled = isIngesting;
     this.ingestButton.textContent = isIngesting ? 'Extracting...' : 'Ingest source';
     this.ingestButton.setAttribute('aria-busy', String(isIngesting));

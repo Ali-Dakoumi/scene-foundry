@@ -4,6 +4,7 @@ export interface GenerationStatusEvent {
   iterations: number;
   approved?: boolean;
   feedback?: string;
+  notes?: string;
   diagnostics?: string;
 }
 
@@ -70,13 +71,18 @@ export class ApiClient {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
+  private requestSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    return signal ? AbortSignal.any([signal, timeout]) : timeout;
+  }
+
   async uploadAsset(file: File, signal?: AbortSignal): Promise<string> {
     const formData = new FormData();
     formData.append('asset', file);
     const response = await fetch(`${this.baseUrl}/api/upload`, {
       method: 'POST',
       body: formData,
-      signal,
+      signal: this.requestSignal(signal, 30_000),
     });
     const payload = await response.json() as { url?: string; error?: string };
     if (!response.ok || !payload.url) throw new Error(payload.error ?? 'Upload failed.');
@@ -86,14 +92,18 @@ export class ApiClient {
   async listProjects(cursor?: string, signal?: AbortSignal): Promise<ProjectPage> {
     const query = new URLSearchParams({ limit: '12' });
     if (cursor) query.set('cursor', cursor);
-    const response = await fetch(`${this.baseUrl}/api/projects?${query}`, { signal });
+    const response = await fetch(`${this.baseUrl}/api/projects?${query}`, {
+      signal: this.requestSignal(signal, 15_000),
+    });
     const payload = await response.json() as ProjectPage & ErrorPayload;
     if (!response.ok) throw new Error(payload.error ?? payload.message ?? 'Could not load projects.');
     return payload;
   }
 
   async getProject(id: string, signal?: AbortSignal): Promise<ProjectDetail> {
-    const response = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}`, { signal });
+    const response = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}`, {
+      signal: this.requestSignal(signal, 15_000),
+    });
     const payload = await response.json() as ProjectDetail & ErrorPayload;
     if (!response.ok) throw new Error(payload.error ?? payload.message ?? 'Could not load the project.');
     return payload;
@@ -104,12 +114,30 @@ export class ApiClient {
     category?: string,
     signal?: AbortSignal,
   ): Promise<KnowledgeIngestionResult> {
-    const response = await fetch(`${this.baseUrl}/api/knowledge/ingest`, {
+    return this.parseIngestionResponse(await fetch(`${this.baseUrl}/api/knowledge/ingest`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, ...(category ? { category } : {}) }),
-      signal,
-    });
+      signal: this.requestSignal(signal, 60_000),
+    }));
+  }
+
+  async ingestKnowledgeVideo(
+    file: File,
+    category?: string,
+    signal?: AbortSignal,
+  ): Promise<KnowledgeIngestionResult> {
+    const formData = new FormData();
+    formData.append('video', file);
+    if (category) formData.append('category', category);
+    return this.parseIngestionResponse(await fetch(`${this.baseUrl}/api/knowledge/ingest`, {
+      method: 'POST',
+      body: formData,
+      signal: this.requestSignal(signal, 180_000),
+    }));
+  }
+
+  private async parseIngestionResponse(response: Response): Promise<KnowledgeIngestionResult> {
     const payload: unknown = await response.json();
     if (!response.ok) {
       const errorMessage = isRecord(payload)
@@ -127,12 +155,13 @@ export class ApiClient {
     prompt: string,
     onEvent: (event: GenerationEvent) => void,
     signal?: AbortSignal,
+    parentProjectId?: string,
   ): Promise<GenerationCompleteEvent> {
     const response = await fetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ prompt, threadId: crypto.randomUUID() }),
-      signal,
+      body: JSON.stringify({ prompt, threadId: crypto.randomUUID(), parentProjectId }),
+      signal: this.requestSignal(signal, 300_000),
     });
 
     if (!response.ok) {
@@ -146,25 +175,29 @@ export class ApiClient {
     let buffer = '';
     let completed: GenerationCompleteEvent | null = null;
 
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done });
-      const blocks = buffer.split(/\r?\n\r?\n/);
-      buffer = blocks.pop() ?? '';
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() ?? '';
 
-      for (const block of blocks) {
-        const parsed = this.parseEvent(block);
-        if (!parsed) continue;
-        if (parsed.type === 'error') {
-          const error = parsed.data as ErrorPayload;
-          throw new Error(error.message ?? error.error ?? 'Generation failed.');
+        for (const block of blocks) {
+          const parsed = this.parseEvent(block);
+          if (!parsed) continue;
+          if (parsed.type === 'error') {
+            const error = parsed.data as ErrorPayload;
+            throw new Error(error.message ?? error.error ?? 'Generation failed.');
+          }
+          const event = parsed as GenerationEvent;
+          onEvent(event);
+          if (event.type === 'complete') completed = event.data;
         }
-        const event = parsed as GenerationEvent;
-        onEvent(event);
-        if (event.type === 'complete') completed = event.data;
-      }
 
-      if (done) break;
+        if (done) break;
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
     }
 
     if (!completed) throw new Error('The generation stream closed before completion.');
@@ -181,6 +214,10 @@ export class ApiClient {
     }
 
     if (data.length === 0) return null;
-    return { type, data: JSON.parse(data.join('\n')) as unknown };
+    try {
+      return { type, data: JSON.parse(data.join('\n')) as unknown };
+    } catch {
+      throw new Error('The generation stream returned malformed data.');
+    }
   }
 }

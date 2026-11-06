@@ -104,7 +104,7 @@ export class GalleryPage extends Page {
       this.previewFrame.classList.add('is-visible');
       this.previewEmpty.classList.add('is-hidden');
       this.previewTitle.textContent = this.truncate(project.prompt, 70);
-      this.reuseLink.href = `/?prompt=${encodeURIComponent(project.prompt)}`;
+      this.reuseLink.href = `/?project=${encodeURIComponent(project.id)}&prompt=${encodeURIComponent(`Iterate on this scene: ${project.prompt}`)}`;
       this.reuseLink.hidden = false;
     } catch (error) {
       if (!this.isCreated || this.isAbortError(error)) return;

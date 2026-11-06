@@ -30,11 +30,13 @@
           </div>
           <section class="knowledge-ingestion" aria-labelledby="knowledge-ingestion-title">
             <h2 id="knowledge-ingestion-title">Teach the librarian</h2>
-            <label for="knowledge-url">GitHub repository or documentation URL</label>
+            <label for="knowledge-url">GitHub, docs, or YouTube URL</label>
             <div class="knowledge-ingestion-row">
-              <input id="knowledge-url" type="url" inputmode="url" autocomplete="url" placeholder="https://github.com/owner/repo" />
+              <input id="knowledge-url" type="url" inputmode="url" autocomplete="url" placeholder="https://github.com/owner/repo or YouTube" />
               <button id="ingest-knowledge" type="button">Ingest source</button>
             </div>
+            <label class="asset-control knowledge-video-control" for="knowledge-video"><span aria-hidden="true">+</span><span id="knowledge-video-label">Or ingest .mp4 / .webm</span></label>
+            <input id="knowledge-video" type="file" accept="video/mp4,video/webm,.mp4,.webm" />
             <p id="knowledge-status" role="status" aria-live="polite"></p>
             <ul id="knowledge-results" aria-label="Newly learned techniques"></ul>
           </section>
@@ -42,8 +44,8 @@
         </form>
       </aside>
       <main class="preview-shell">
-        <header class="preview-header"><div><span class="preview-kicker">Live output</span><strong id="preview-status">Waiting for a brief</strong></div><button id="reload-preview" class="icon-button" type="button" aria-label="Reload preview" disabled>&#8635;</button></header>
-        <div class="preview-stage"><div id="empty-state" class="empty-state"><span class="empty-mark" aria-hidden="true">S/F</span><p>Your generated scene will appear here.</p></div><iframe id="preview-frame" title="Generated scene preview" sandbox="allow-scripts"></iframe></div>
+        <header class="preview-header"><div><span class="preview-kicker">Live output</span><strong id="preview-status">Waiting for a brief</strong></div><div class="preview-actions"><button id="download-scene" class="secondary-button" type="button" disabled>Download HTML</button><button id="reload-preview" class="icon-button" type="button" aria-label="Reload preview" disabled>&#8635;</button></div></header>
+        <div class="preview-stage"><div class="live-controls" aria-label="Scene controls"><label>Speed <input id="control-speed" type="range" min="0" max="2" value="1" step="0.1" /></label><label>Hue <input id="control-hue" type="range" min="-180" max="180" value="0" step="1" /></label><label class="toggle-control"><input id="control-wireframe" type="checkbox" /> Wireframe</label></div><div id="empty-state" class="empty-state"><span class="empty-mark" aria-hidden="true">S/F</span><p>Your generated scene will appear here.</p></div><iframe id="preview-frame" title="Generated scene preview" sandbox="allow-scripts"></iframe></div>
       </main>
       </div>
     </div>
