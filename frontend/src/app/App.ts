@@ -2,6 +2,8 @@ import { Page } from '../components/Page';
 import { Scroll } from '../core/Scroll';
 import { GeneratorPage } from '../pages/GeneratorPage';
 import { GalleryPage } from '../pages/GalleryPage';
+import { KnowledgePage } from '../pages/KnowledgePage';
+import { BlobExperimentPage } from '../pages/BlobExperimentPage';
 import { DOM } from '../utils/DOM';
 
 type PageRegistry = Map<string, Page>;
@@ -91,6 +93,8 @@ export class App {
   private registerPages(): void {
     this.pages.set('generator', new GeneratorPage());
     this.pages.set('gallery', new GalleryPage());
+    this.pages.set('knowledge', new KnowledgePage());
+    this.pages.set('blob-experiment', new BlobExperimentPage());
   }
 
   private createCurrentPage(): void {

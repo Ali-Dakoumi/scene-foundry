@@ -205,7 +205,7 @@ if (!this.isCreated) return;
 
 Abort errors are expected lifecycle events and should not produce user-facing failures. All acquired locks must be released in `finally` and again defensively from `onDestroy()` using an idempotent release callback.
 
-All backend communication is owned by `services/ApiClient.ts`. The generation endpoint is a POST request returning Server-Sent Events. Pages consume typed `project`, `status`, and `complete` events and must not implement their own stream parser.
+All backend communication is owned by `services/ApiClient.ts`. The generation endpoint is a POST request returning Server-Sent Events. Pages consume typed `project`, `preview`, `status`, and `complete` events and must not implement their own stream parser. Each `preview` event carries the latest statically validated scene as soon as Scene Builder returns it, before Puppeteer and vision review finish. A revision emits another `preview` event to replace the iframe contents; only `complete` confirms the final review and persistence result.
 
 ## Adding a route
 

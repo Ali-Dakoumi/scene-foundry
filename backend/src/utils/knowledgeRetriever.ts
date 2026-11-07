@@ -26,12 +26,14 @@ function scoreTechnique(item: KnowledgeTechnique, terms: readonly string[]): num
   const title = item.title.toLowerCase();
   const category = item.category.toLowerCase();
   const summary = item.summary.toLowerCase();
+  const snippet = item.codeSnippet.toLowerCase();
 
   return terms.reduce((score, term) => (
     score
     + (title.includes(term) ? 4 : 0)
     + (category.includes(term) ? 3 : 0)
     + (summary.includes(term) ? 1 : 0)
+    + (snippet.includes(term) ? 2 : 0)
   ), 0);
 }
 

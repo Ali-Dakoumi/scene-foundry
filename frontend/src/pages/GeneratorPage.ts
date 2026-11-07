@@ -23,6 +23,12 @@ export class GeneratorPage extends Page {
   private speedControl!: HTMLInputElement;
   private hueControl!: HTMLInputElement;
   private wireframeControl!: HTMLInputElement;
+  private generationLoader!: HTMLElement;
+  private loaderKicker!: HTMLElement;
+  private loaderTitle!: HTMLElement;
+  private loaderDetail!: HTMLElement;
+  private progressFill!: HTMLElement;
+  private generationSteps: HTMLElement[] = [];
   private knowledgeUrl!: HTMLInputElement;
   private knowledgeVideo!: HTMLInputElement;
   private knowledgeVideoLabel!: HTMLElement;
@@ -31,9 +37,11 @@ export class GeneratorPage extends Page {
   private knowledgeResults!: HTMLUListElement;
   private latestCode = '';
   private generating = false;
+  private generationPreviewReceived = false;
   private ingesting = false;
   private releaseGenerationScroll: (() => void) | null = null;
   private parentProjectId: string | undefined;
+  private highestGenerationStep = 0;
 
   constructor() {
     super({
@@ -101,6 +109,12 @@ export class GeneratorPage extends Page {
     this.speedControl = this.select<HTMLInputElement>('#control-speed');
     this.hueControl = this.select<HTMLInputElement>('#control-hue');
     this.wireframeControl = this.select<HTMLInputElement>('#control-wireframe');
+    this.generationLoader = this.select<HTMLElement>('#generation-loader');
+    this.loaderKicker = this.select<HTMLElement>('#generation-loader-kicker');
+    this.loaderTitle = this.select<HTMLElement>('#generation-loader-title');
+    this.loaderDetail = this.select<HTMLElement>('#generation-loader-detail');
+    this.progressFill = this.select<HTMLElement>('#generation-progress-fill');
+    this.generationSteps = this.selectAll<HTMLElement>('#generation-steps li');
     this.knowledgeUrl = this.select<HTMLInputElement>('#knowledge-url');
     this.knowledgeVideo = this.select<HTMLInputElement>('#knowledge-video');
     this.knowledgeVideoLabel = this.select<HTMLElement>('#knowledge-video-label');
@@ -315,6 +329,7 @@ export class GeneratorPage extends Page {
     if (!prompt || this.generating) return;
 
     this.generating = true;
+    this.generationPreviewReceived = false;
     this.releaseGenerationScroll = this.scroll.lock();
     this.appendMessage('user', 'You', prompt);
     this.promptInput.value = '';
@@ -329,12 +344,8 @@ export class GeneratorPage extends Page {
       );
       if (!this.isCreated) return;
 
-      this.latestCode = result.code;
-      this.previewFrame.srcdoc = result.code;
-      this.previewFrame.classList.add('is-visible');
-      this.emptyState.classList.add('is-hidden');
-      this.reloadBtn.disabled = false;
-      this.downloadBtn.disabled = false;
+      this.renderGeneratedPreview(result.code);
+      this.completeGenerationLoader();
       const hasRuntimeErrors = result.diagnostics.includes('[ERROR');
       this.previewStatus.textContent = hasRuntimeErrors
         ? 'Rendered with issues'
@@ -354,8 +365,17 @@ export class GeneratorPage extends Page {
       );
     } catch (error) {
       if (!this.isCreated || this.isAbortError(error)) return;
-      this.previewStatus.textContent = 'Generation failed';
-      this.appendMessage('error', 'Error', error instanceof Error ? error.message : 'Failed to generate.');
+      this.previewStatus.textContent = this.generationPreviewReceived
+        ? 'Preview ready — final review did not complete'
+        : 'Generation failed';
+      if (!this.generationPreviewReceived) this.failGenerationLoader();
+      this.appendMessage(
+        'error',
+        this.generationPreviewReceived ? 'Review' : 'Error',
+        this.generationPreviewReceived
+          ? `The preview is available, but final review and saving did not complete. ${error instanceof Error ? error.message : 'Generation failed.'}`
+          : error instanceof Error ? error.message : 'Failed to generate.',
+      );
     } finally {
       this.generating = false;
       this.releaseGenerationScroll?.();
@@ -370,11 +390,33 @@ export class GeneratorPage extends Page {
   private handleGenerationEvent(event: GenerationEvent): void {
     if (!this.isCreated) return;
     if (event.type === 'project') {
-      this.previewStatus.textContent = 'Project created';
+      this.updateGenerationLoader(
+        0,
+        'Art Director',
+        'Planning the visual system',
+        'Translating your brief into composition, camera, materials, lighting, and a clear creative direction.',
+      );
+      return;
+    }
+    if (event.type === 'preview') {
+      this.generationPreviewReceived = true;
+      this.renderGeneratedPreview(event.data.code);
+      this.generationLoader.hidden = true;
+      this.previewStatus.textContent = event.data.iteration > 0
+        ? `Revision ${event.data.iteration} rendered — visual review continues`
+        : 'Preview ready — technical and visual review continue';
+      this.appendMessage(
+        'agent',
+        'Preview',
+        event.data.iteration > 0
+          ? `Revision ${event.data.iteration} is live; the visual review continues.`
+          : 'The first render is live; technical checks and visual review continue.',
+      );
       return;
     }
     if (event.type === 'status') {
       this.previewStatus.textContent = event.data.phase;
+      this.updateLoaderForNode(event.data.node, event.data.iterations);
       if (event.data.diagnostics?.includes('[ERROR')) {
         this.previewStatus.textContent = 'Technical checks found runtime issues';
       }
@@ -395,6 +437,18 @@ export class GeneratorPage extends Page {
         );
       }
     }
+  }
+
+  private renderGeneratedPreview(code: string): void {
+    if (!code) return;
+    const shouldLoad = code !== this.latestCode || !this.previewFrame.classList.contains('is-visible');
+    this.latestCode = code;
+    if (shouldLoad) this.previewFrame.srcdoc = code;
+    this.previewFrame.classList.add('is-visible');
+    this.emptyState.classList.add('is-hidden');
+    this.reloadBtn.disabled = false;
+    this.downloadBtn.disabled = false;
+    this.liveControlsVisible(true);
   }
 
   private async loadParentProject(id: string): Promise<void> {
@@ -423,8 +477,112 @@ export class GeneratorPage extends Page {
     this.generateBtn.dataset.state = isGenerating ? 'loading' : 'default';
     this.buttonLabel.textContent = isGenerating ? 'Agents working' : 'Generate scene';
     if (isGenerating) {
-      this.previewStatus.textContent = 'Directing, building, and reviewing';
+      this.startGenerationLoader();
+    } else if (this.generationLoader.dataset.state === 'complete') {
+      window.setTimeout(() => {
+        if (!this.isCreated || this.generating) return;
+        this.generationLoader.hidden = true;
+        this.generationLoader.dataset.state = 'idle';
+      }, detection.prefersReducedMotion() ? 0 : 850);
     }
+  }
+
+  private startGenerationLoader(): void {
+    this.highestGenerationStep = 0;
+    this.previewStatus.textContent = 'Preparing the agent team';
+    this.generationLoader.hidden = false;
+    this.generationLoader.dataset.state = 'loading';
+    this.liveControlsVisible(false);
+    this.updateGenerationLoader(
+      0,
+      'Preparing the studio',
+      'Starting the agent team',
+      'Opening a project and preparing a clean generation thread.',
+    );
+  }
+
+  private updateLoaderForNode(node: string, iterations: number): void {
+    const revision = iterations > 1 ? ` Revision ${iterations} is now in progress.` : '';
+    if (node === 'artDirector') {
+      this.updateGenerationLoader(1, 'Motion Director + Look Dev', 'Designing movement and atmosphere', `Defining timing, easing, materials, lighting, and visual depth.${revision}`);
+      return;
+    }
+    if (node === 'specialists' || node === 'motionDirector' || node === 'lookDev') {
+      this.updateGenerationLoader(2, 'Scene Builder', 'Writing the WebGL scene', `Building the Three.js structure, shaders, responsive behavior, and GSAP timeline.${revision}`);
+      return;
+    }
+    if (node === 'sceneBuilder') {
+      this.updateGenerationLoader(3, 'Technical gate', 'Rendering and checking the scene', 'Launching the generated page, checking WebGL, canvas visibility, requests, and runtime errors.');
+      return;
+    }
+    if (node === 'technicalGate') {
+      this.updateGenerationLoader(4, 'Motion Critic', 'Reviewing the finished motion', 'Watching the rendered clip for camera flow, easing, lighting stability, and dropped frames.');
+      return;
+    }
+    if (node === 'motionCritic') {
+      this.updateGenerationLoader(4, 'Review complete', 'Applying the critic verdict', 'Finishing the accepted scene or sending precise revision notes back to the builder.');
+    }
+  }
+
+  private updateGenerationLoader(step: number, kicker: string, title: string, detail: string): void {
+    this.highestGenerationStep = Math.max(this.highestGenerationStep, step);
+    this.generationSteps.forEach((item, index) => {
+      item.dataset.state = index < this.highestGenerationStep
+        ? 'complete'
+        : index === step
+          ? 'active'
+          : 'pending';
+    });
+    this.progressFill.style.transform = `scaleX(${Math.min(1, (this.highestGenerationStep + 1) / this.generationSteps.length)})`;
+
+    if (detection.prefersReducedMotion()) {
+      this.loaderKicker.textContent = kicker;
+      this.loaderTitle.textContent = title;
+      this.loaderDetail.textContent = detail;
+      return;
+    }
+    const copy = [this.loaderKicker, this.loaderTitle, this.loaderDetail];
+    this.anim.registerTween(gsap.to(copy, {
+      opacity: 0,
+      y: -6,
+      duration: 0.16,
+      ease: 'power2.in',
+      overwrite: 'auto',
+      onComplete: () => {
+        if (!this.isCreated) return;
+        this.loaderKicker.textContent = kicker;
+        this.loaderTitle.textContent = title;
+        this.loaderDetail.textContent = detail;
+        this.anim.registerTween(gsap.fromTo(copy, { opacity: 0, y: 7 }, {
+          opacity: 1,
+          y: 0,
+          duration: 0.28,
+          stagger: 0.035,
+          ease: 'sceneFoundry',
+        }));
+      },
+    }));
+  }
+
+  private completeGenerationLoader(): void {
+    this.generationLoader.dataset.state = 'complete';
+    this.updateGenerationLoader(4, 'Scene ready', 'The world is live', 'The final code is saved. Preview controls and standalone export are now available.');
+    this.generationSteps.forEach((item) => { item.dataset.state = 'complete'; });
+    this.progressFill.style.transform = 'scaleX(1)';
+    this.liveControlsVisible(true);
+  }
+
+  private failGenerationLoader(): void {
+    this.generationLoader.hidden = false;
+    this.generationLoader.dataset.state = 'error';
+    this.loaderKicker.textContent = 'Generation stopped';
+    this.loaderTitle.textContent = 'The agent run could not finish';
+    this.loaderDetail.textContent = 'Review the error in the studio log, adjust the brief if needed, and try again.';
+    this.liveControlsVisible(Boolean(this.latestCode));
+  }
+
+  private liveControlsVisible(visible: boolean): void {
+    this.select<HTMLElement>('.live-controls').classList.toggle('is-hidden', !visible);
   }
 
   private setUploadState(isUploading: boolean, fileName = ''): void {

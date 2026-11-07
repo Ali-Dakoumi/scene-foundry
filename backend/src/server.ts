@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { unlink } from 'node:fs/promises';
+import path from 'node:path';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import multer from 'multer';
@@ -13,6 +14,7 @@ import { publicErrorMessage } from './utils/publicError.js';
 import { knowledgeVideoUpload, upload, uploadsDirectory } from './utils/upload.js';
 import { deconstructVideoSource } from './utils/videoDeconstructor.js';
 import { isYouTubeHost, normalizeYouTubeUrl } from './utils/youtubeUrl.js';
+import { exploreAndAnalyseUrl } from './utils/visualExplorer.js';
 
 const app = express();
 const librarian = new Librarian();
@@ -30,7 +32,13 @@ const projectListQuerySchema = z.object({
   cursor: z.uuid().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(12),
 });
+const knowledgeListQuerySchema = z.object({
+  cursor: z.uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(24),
+  category: z.string().trim().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/i).optional(),
+});
 const projectParamsSchema = z.object({ id: z.uuid() });
+const visualAnalysisSchema = z.object({ url: z.string().trim().url().max(2_048) });
 
 type GraphUpdate = Partial<typeof GraphState.State>;
 
@@ -97,13 +105,19 @@ app.get('/api/projects', async (request, response): Promise<void> => {
   }
 
   const { cursor, limit } = parsedQuery.data;
-  const projects = await prisma.project.findMany({
+  let projects;
+  try {
+    projects = await prisma.project.findMany({
     where: { finalCode: { not: '' } },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     select: { id: true, prompt: true, createdAt: true },
-  });
+    });
+  } catch (error) {
+    response.status(503).json({ error: publicErrorMessage(error) });
+    return;
+  }
   const hasMore = projects.length > limit;
   const items = hasMore ? projects.slice(0, limit) : projects;
 
@@ -141,6 +155,68 @@ app.post('/api/upload', upload.single('asset'), (request, response): void => {
   response.status(201).json({
     url: `${request.protocol}://${request.get('host')}/assets/${request.file.filename}`,
   });
+});
+
+app.get('/api/knowledge', async (request, response): Promise<void> => {
+  const parsedQuery = knowledgeListQuerySchema.safeParse(request.query);
+  if (!parsedQuery.success) {
+    response.status(400).json({ error: 'Invalid knowledge list query.' });
+    return;
+  }
+
+  const { cursor, limit, category } = parsedQuery.data;
+  let items;
+  try {
+    items = await prisma.knowledgeItem.findMany({
+    ...(category ? { where: { category } } : {}),
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    select: {
+      id: true,
+      title: true,
+      category: true,
+      summary: true,
+      codeSnippet: true,
+      sourceUrl: true,
+      createdAt: true,
+    },
+    });
+  } catch (error) {
+    response.status(503).json({ error: publicErrorMessage(error) });
+    return;
+  }
+  const hasMore = items.length > limit;
+  const page = hasMore ? items.slice(0, limit) : items;
+
+  response.json({
+    items: page,
+    nextCursor: hasMore ? page.at(-1)?.id ?? null : null,
+  });
+});
+
+app.post('/api/visual-analysis', limitKnowledgeIngestion, async (request, response): Promise<void> => {
+  const parsed = visualAnalysisSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: 'Provide a valid public webpage URL.' });
+    return;
+  }
+  try {
+    const result = await exploreAndAnalyseUrl(parsed.data.url);
+    response.json({
+      ...result,
+      videoPath: undefined,
+      videoUrl: `/assets/${path.basename(result.videoPath)}`,
+    });
+  } catch (error) {
+    console.error('Visual analysis failed:', error);
+    const message = error instanceof Error ? error.message : 'Visual analysis failed.';
+    if (/public|HTTP|HTTPS|credentials|URL/i.test(message)) {
+      response.status(400).json({ error: message });
+      return;
+    }
+    response.status(502).json({ error: 'The visual explorer could not analyse this page.' });
+  }
 });
 
 app.post(
@@ -298,6 +374,7 @@ app.post('/api/generate', async (request: Request, response: Response): Promise<
       {
         userPrompt: prompt,
         designPlan: '',
+        renderMode: 'dom',
         motionPlan: '',
         lookPlan: '',
         generatedCode: parentProject?.finalCode ?? '',
@@ -323,6 +400,14 @@ app.post('/api/generate', async (request: Request, response: Response): Promise<
         if (value.criticFeedback) finalFeedback = value.criticFeedback;
         if (value.runtimeDiagnostics) finalDiagnostics = value.runtimeDiagnostics;
         if (typeof value.reviewApproved === 'boolean') finalApproved = value.reviewApproved;
+
+        if (node === 'sceneBuilder' && value.generatedCode) {
+          sendEvent('preview', {
+            projectId: project.id,
+            code: value.generatedCode,
+            iteration: finalIterations,
+          });
+        }
 
         sendEvent('status', {
           node,

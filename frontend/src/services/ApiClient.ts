@@ -19,8 +19,15 @@ export interface GenerationCompleteEvent {
   reviewLimitReached: boolean;
 }
 
+export interface GenerationPreviewEvent {
+  projectId: string;
+  code: string;
+  iteration: number;
+}
+
 export type GenerationEvent =
   | { type: 'project'; data: { projectId: string; threadId: string } }
+  | { type: 'preview'; data: GenerationPreviewEvent }
   | { type: 'status'; data: GenerationStatusEvent }
   | { type: 'complete'; data: GenerationCompleteEvent };
 
@@ -45,6 +52,42 @@ export interface KnowledgeIngestionResult {
   success: true;
   count: number;
   items: Array<{ title: string; category: string }>;
+}
+
+export interface KnowledgeSummary {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  codeSnippet: string;
+  sourceUrl: string;
+  createdAt: string;
+}
+
+export interface KnowledgePageResult {
+  items: KnowledgeSummary[];
+  nextCursor: string | null;
+}
+
+export interface VisualAnalysisResult {
+  sourceUrl: string;
+  finalUrl: string;
+  title: string;
+  durationMs: number;
+  videoUrl: string;
+  actions: Array<{ atMs: number; type: 'hover' | 'click' | 'scroll'; target: string }>;
+  report: {
+    executiveSummary: string;
+    pageStructure: string[];
+    layout: string[];
+    visualDesign: string[];
+    typography: string[];
+    animations: Array<{ trigger: string; observation: string; timing: string; confidence: string }>;
+    interactions: Array<{ action: string; response: string }>;
+    performance: string[];
+    issues: string[];
+    implementationGuidance: string[];
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -109,6 +152,22 @@ export class ApiClient {
     return payload;
   }
 
+  async listKnowledge(
+    cursor?: string,
+    category?: string,
+    signal?: AbortSignal,
+  ): Promise<KnowledgePageResult> {
+    const query = new URLSearchParams({ limit: '24' });
+    if (cursor) query.set('cursor', cursor);
+    if (category) query.set('category', category);
+    const response = await fetch(`${this.baseUrl}/api/knowledge?${query}`, {
+      signal: this.requestSignal(signal, 15_000),
+    });
+    const payload = await response.json() as KnowledgePageResult & ErrorPayload;
+    if (!response.ok) throw new Error(payload.error ?? payload.message ?? 'Could not load knowledge.');
+    return payload;
+  }
+
   async ingestKnowledge(
     url: string,
     category?: string,
@@ -135,6 +194,18 @@ export class ApiClient {
       body: formData,
       signal: this.requestSignal(signal, 180_000),
     }));
+  }
+
+  async analyseUrl(url: string, signal?: AbortSignal): Promise<VisualAnalysisResult> {
+    const response = await fetch(`${this.baseUrl}/api/visual-analysis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal: this.requestSignal(signal, 180_000),
+    });
+    const payload = await response.json() as VisualAnalysisResult & ErrorPayload;
+    if (!response.ok) throw new Error(payload.error ?? payload.message ?? 'Visual analysis failed.');
+    return { ...payload, videoUrl: new URL(payload.videoUrl, this.baseUrl).toString() };
   }
 
   private async parseIngestionResponse(response: Response): Promise<KnowledgeIngestionResult> {

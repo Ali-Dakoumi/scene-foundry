@@ -2,21 +2,24 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { getKnowledgeDirectory } from './knowledgePaths.js';
 
-let cachedKnowledge: string | null = null;
+const cachedKnowledge = new Map<'dom' | 'webgl', string>();
 
-export function getKnowledgeContext(): string {
-  if (cachedKnowledge) return cachedKnowledge;
+export function getKnowledgeContext(renderMode: 'dom' | 'webgl' = 'dom'): string {
+  const cached = cachedKnowledge.get(renderMode);
+  if (cached) return cached;
 
   const knowledgeDirectory = getKnowledgeDirectory();
   const rules = readFileSync(path.join(knowledgeDirectory, 'rules.md'), 'utf8');
-  const snippets = readFileSync(path.join(knowledgeDirectory, 'threejs-snippets.ts'), 'utf8');
-  cachedKnowledge = [
+  const sections = [
     '--- CORE RULES ---',
     rules.trim(),
-    '',
-    '--- SMALL STARTER EXAMPLE ---',
-    snippets.trim(),
-  ].join('\n');
+  ];
+  if (renderMode === 'webgl') {
+    const snippets = readFileSync(path.join(knowledgeDirectory, 'threejs-snippets.ts'), 'utf8');
+    sections.push('', '--- SMALL WEBGL STARTER EXAMPLE ---', snippets.trim());
+  }
+  const context = sections.join('\n').slice(0, 6_000);
+  cachedKnowledge.set(renderMode, context);
 
-  return cachedKnowledge;
+  return context;
 }

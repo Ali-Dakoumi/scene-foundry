@@ -1,100 +1,93 @@
 # Scene Foundry Backend
 
-## Initial setup
+Multi-agent WebGL scene generator. Text generation uses a free-provider chain. Neon PostgreSQL via Prisma is unchanged.
 
-The equivalent clean-project setup commands are:
+## AI providers
+
+Priority:
+
+1. OpenRouter free model (`openrouter/free` by default)
+2. Optional second OpenRouter free model (`OPENROUTER_FALLBACK_MODEL`, must include `:free`)
+3. Ollama local model (`qwen2.5-coder:7b`)
+4. Cloudflare Workers AI, if account id and token are set
+5. OpenAI (ChatGPT API) when `OPENAI_API_KEY` is set
+6. Gemini when `GOOGLE_API_KEY` is set or `AI_INCLUDE_GEMINI=true`
+
+Paid OpenRouter models are rejected. OpenAI is billed by OpenAI and is optional. Gemini remains optional.
+
+## Initial setup
 
 ```bash
 cd backend
 npm install
-npx prisma init --datasource-provider sqlite
 npx prisma generate
-npx prisma migrate dev --name init
 npm run dev
 ```
 
-This repository is already initialized. Configure `GOOGLE_API_KEY` in `.env`, then run:
+The Neon `DATABASE_URL` in `.env` is already the project database. Do not reset it.
 
-```bash
-npm install
-npm run db:generate
-npm run db:migrate
-npm run dev
+### OpenRouter (primary)
+
+Create a free key at [https://openrouter.ai/keys](https://openrouter.ai/keys) and set `OPENROUTER_API_KEY` in `backend/.env`.
+
+### Ollama (local fallback, Windows)
+
+```powershell
+winget install Ollama.Ollama
+ollama pull qwen2.5-coder:7b
+ollama serve
 ```
 
-On Windows machines where Smart App Control blocks Prisma's schema-engine executable, initialize the checked-in SQLite migration with:
+Default API: `http://localhost:11434/v1`.
 
-```bash
-npm run db:init:windows
-```
+### Cloudflare (optional)
+
+From the Cloudflare dashboard: Workers & Pages → Workers AI. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`.
+
+### OpenAI / ChatGPT (optional paid fallback)
+
+Set `OPENAI_API_KEY` in `backend/.env`. Default model is `gpt-4o-mini`. This is billed by OpenAI and is used after free OpenRouter quota fails. Set `AI_PROVIDER=openai` to try OpenAI first.
+
+### Gemini (optional)
+
+Set `GOOGLE_API_KEY` and `AI_INCLUDE_GEMINI=true` only if you still want Gemini in the chain. YouTube ingest still uses Gemini when a Google key is present.
 
 ## Environment
 
-```env
-GOOGLE_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-2.0-flash
-GEMINI_FALLBACK_MODEL=gemini-2.0-flash-lite
-DATABASE_URL=file:./dev.db
-FRONTEND_ORIGIN=http://localhost:5173
-PORT=3000
+See `.env.example`. Required for boot: `DATABASE_URL`. At least one text provider should be usable (OpenRouter, OpenAI, local Ollama, Cloudflare, or Gemini).
+
+## Commands
+
+```bash
+npm run dev          # backend with nodemon
+npm start            # node dist/server.js after npm run build
+npm test             # TypeScript compile + unit/live tests
+npm run knowledge:seed
+npm run review:blob   # record and vision-critique the local SPA field study
+```
+
+Run the SPA field study recorder with both the Vite frontend and backend environment configured. Start Vite first; the command records `/blob.html` from `FRONTEND_ORIGIN` (or an optional origin argument), writes an MP4 under `public/uploads`, and prints runtime diagnostics plus the vision critique:
+
+```bash
+cd frontend
+npm run dev
+```
+
+In another terminal:
+
+```bash
+cd backend
+npm run review:blob
+```
+
+If Vite selected another port, pass its origin explicitly:
+
+```bash
+npm run review:blob -- http://localhost:5181
 ```
 
 ## API
 
-### `GET /health`
+Existing routes are unchanged: `GET /health`, `GET /api/projects`, `GET /api/projects/:id`, `POST /api/generate` (SSE), `POST /api/knowledge/ingest`, `GET /api/knowledge`, `POST /api/upload`.
 
-Checks both the HTTP application and Prisma database connection.
-
-### `POST /api/upload`
-
-Accepts one multipart field named `asset`. Supported extensions are PNG, JPEG, WebP, GIF, SVG, GLB, GLTF, OBJ, and FBX. The maximum size is 15 MB.
-
-### `POST /api/generate`
-
-Request:
-
-```json
-{
-  "prompt": "Build a glass planet orbiting a warm sun",
-  "threadId": "optional-uuid"
-}
-```
-
-The response is `text/event-stream` and may contain:
-
-```text
-event: project
-data: {"projectId":"...","threadId":"..."}
-
-event: status
-data: {"node":"artDirector","phase":"Design plan ready","iterations":0}
-
-event: status
-data: {"node":"sceneBuilder","phase":"Scene implementation ready","iterations":0}
-
-event: status
-data: {"node":"critic","phase":"Critic approved the scene","iterations":1,"diagnostics":"None"}
-
-event: complete
-data: {"projectId":"...","threadId":"...","code":"...","iterations":1,"criticFeedback":"APPROVED","diagnostics":"None"}
-```
-
-Errors emitted after streaming begins use the `error` SSE event.
-
-## Workflow
-
-```text
-Art Director -> Scene Builder -> Critic
-                    ^             |
-                    |-- revision --|
-```
-
-The Critic ends the workflow on exact `APPROVED` or after three reviews. `MemorySaver` checkpoints each run by `thread_id`. Every new frontend generation uses a new UUID to avoid merging unrelated project state.
-
-Before critic review, generated HTML is checked for required document structure and unsafe navigation or embedding primitives. Puppeteer then captures console errors, uncaught exceptions, failed network requests, HTTP failures, canvas visibility, and WebGL availability. Runtime errors prevent approval and are sent back to Scene Builder as revision context.
-
-Run validation and browser diagnostic regression tests with:
-
-```bash
-npm test
-```
+Successful generations still write `Project.finalCode` through Prisma to Neon.

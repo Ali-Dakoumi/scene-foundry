@@ -1,0 +1,254 @@
+[
+  {
+    "title": "Responsive WebGL canvas shell",
+    "category": "three-boilerplates",
+    "summary": "Create a full-viewport renderer with a perspective camera, pixel-ratio cap, and a resize handler that updates aspect and drawing buffer together.",
+    "codeSnippet": "const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);\nconst renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });\nrenderer.setPixelRatio(Math.min(devicePixelRatio, 2));\nrenderer.setSize(innerWidth, innerHeight);\ndocument.body.append(renderer.domElement);\naddEventListener('resize', () => {\n  camera.aspect = innerWidth / innerHeight;\n  camera.updateProjectionMatrix();\n  renderer.setSize(innerWidth, innerHeight);\n});",
+    "sourceUrl": "scene-foundry:seed/responsive-canvas"
+  },
+  {
+    "title": "Globe from sphere geometry",
+    "category": "three-boilerplates",
+    "summary": "Build a simple planet as a UV sphere with enough segments for a smooth silhouette, then parent it so orbit and spin can be animated independently.",
+    "codeSnippet": "const globe = new THREE.Mesh(\n  new THREE.SphereGeometry(1, 64, 48),\n  new THREE.MeshStandardMaterial({ color: 0x3d8fd1, roughness: 0.45, metalness: 0.1 }),\n);\nconst pivot = new THREE.Group();\npivot.add(globe);\nscene.add(pivot);",
+    "sourceUrl": "scene-foundry:seed/globe-sphere"
+  },
+  {
+    "title": "Scene, camera, light starter",
+    "category": "three-boilerplates",
+    "summary": "A minimal look setup: hemisphere fill, a keyed directional light, and a camera pulled back on z so a unit-scale subject reads clearly.",
+    "codeSnippet": "scene.add(new THREE.HemisphereLight(0xeaf2ff, 0x1a1520, 1.2));\nconst key = new THREE.DirectionalLight(0xfff2d6, 1.4);\nkey.position.set(3, 4, 2);\nscene.add(key);\ncamera.position.set(0, 0.4, 4);\ncamera.lookAt(0, 0, 0);",
+    "sourceUrl": "scene-foundry:seed/starter-lights"
+  },
+  {
+    "title": "GSAP-owned render loop",
+    "category": "three-boilerplates",
+    "summary": "Drive rendering from gsap.ticker so speed controls can scale the global timeline without a second clock.",
+    "codeSnippet": "const render = () => renderer.render(scene, camera);\ngsap.ticker.add(render);\naddEventListener('beforeunload', () => gsap.ticker.remove(render));",
+    "sourceUrl": "scene-foundry:seed/gsap-ticker"
+  },
+  {
+    "title": "Slow globe spin",
+    "category": "animations",
+    "summary": "Spin a planet on Y with a long linear tween so the motion reads as axial rotation rather than a whip.",
+    "codeSnippet": "gsap.to(globe.rotation, { y: Math.PI * 2, duration: 18, ease: 'none', repeat: -1 });",
+    "sourceUrl": "scene-foundry:seed/globe-spin"
+  },
+  {
+    "title": "Orbital pivot around a sun",
+    "category": "animations",
+    "summary": "Orbit a child globe around a world-origin sun by rotating a parent group, keeping local spin independent.",
+    "codeSnippet": "const sun = new THREE.Mesh(new THREE.SphereGeometry(0.35, 32, 24), new THREE.MeshBasicMaterial({ color: 0xffc56b }));\nscene.add(sun);\nconst orbit = new THREE.Group();\nglobe.position.set(2.4, 0, 0);\norbit.add(globe);\nscene.add(orbit);\ngsap.to(orbit.rotation, { y: Math.PI * 2, duration: 12, ease: 'none', repeat: -1 });",
+    "sourceUrl": "scene-foundry:seed/orbit-pivot"
+  },
+  {
+    "title": "Slow camera drift",
+    "category": "animations",
+    "summary": "Ease the camera along a short arc over three seconds with power2.inOut so the move decelerates instead of popping.",
+    "codeSnippet": "gsap.to(camera.position, {\n  x: 0.6, y: 0.35, z: 3.4,\n  duration: 3,\n  ease: 'power2.inOut',\n  onUpdate: () => camera.lookAt(0, 0, 0),\n});",
+    "sourceUrl": "scene-foundry:seed/camera-drift"
+  },
+  {
+    "title": "Three-second intro timeline",
+    "category": "animations",
+    "summary": "Stage a critic-length beat: fade in, ease the camera, then settle rotation with power2.out.",
+    "codeSnippet": "const intro = gsap.timeline();\nintro.from(globe.scale, { x: 0.2, y: 0.2, z: 0.2, duration: 0.8, ease: 'power3.out' }, 0);\nintro.to(camera.position, { z: 3.2, duration: 1.4, ease: 'power2.inOut' }, 0.2);\nintro.to(globe.rotation, { y: 0.6, duration: 1.6, ease: 'power2.out' }, 0.6);",
+    "sourceUrl": "scene-foundry:seed/three-second-intro"
+  },
+  {
+    "title": "Power2 deceleration",
+    "category": "animations",
+    "summary": "Prefer power2.out or power3.out at the end of a move so transforms do not stop linearly.",
+    "codeSnippet": "gsap.to(subject.position, { y: 0.25, duration: 1.2, ease: 'power2.out' });\ngsap.to(subject.rotation, { x: 0.15, duration: 1.2, ease: 'power3.out' });",
+    "sourceUrl": "scene-foundry:seed/power2-decel"
+  },
+  {
+    "title": "Staggered mesh reveals",
+    "category": "animations",
+    "summary": "Reveal a small set of objects with a bounded stagger so the beat stays inside a few seconds.",
+    "codeSnippet": "gsap.from(meshes.map((mesh) => mesh.scale), {\n  x: 0, y: 0, z: 0,\n  duration: 0.7,\n  stagger: 0.08,\n  ease: 'back.out(1.4)',\n});",
+    "sourceUrl": "scene-foundry:seed/stagger-reveal"
+  },
+  {
+    "title": "Fresnel rim on a globe",
+    "category": "shaders",
+    "summary": "A small original fresnel term brightens grazing angles so a sphere reads as a volume instead of a flat disc.",
+    "codeSnippet": "const fresnel = new THREE.ShaderMaterial({\n  uniforms: { color: { value: new THREE.Color(0x4ea3ff) } },\n  vertexShader: `varying vec3 vN; varying vec3 vV; void main(){ vN = normalize(normalMatrix * normal); vec4 p = modelViewMatrix * vec4(position,1.0); vV = normalize(-p.xyz); gl_Position = projectionMatrix * p; }`,\n  fragmentShader: `uniform vec3 color; varying vec3 vN; varying vec3 vV; void main(){ float f = pow(1.0 - max(dot(vN, vV), 0.0), 2.4); gl_FragColor = vec4(color * (0.25 + f), 1.0); }`,\n});",
+    "sourceUrl": "scene-foundry:seed/fresnel-rim"
+  },
+  {
+    "title": "Iridescent view-dependent tint",
+    "category": "shaders",
+    "summary": "Mix two hues with a view angle so a globe or shell shifts color without copying a third-party iridescence shader.",
+    "codeSnippet": "const iridescence = new THREE.ShaderMaterial({\n  uniforms: { a: { value: new THREE.Color(0x66f0c8) }, b: { value: new THREE.Color(0xb48cff) } },\n  vertexShader: `varying float vF; void main(){ vec3 n = normalize(normalMatrix * normal); vec4 p = modelViewMatrix * vec4(position,1.0); vF = pow(1.0 - abs(dot(n, normalize(-p.xyz))), 1.8); gl_Position = projectionMatrix * p; }`,\n  fragmentShader: `uniform vec3 a; uniform vec3 b; varying float vF; void main(){ gl_FragColor = vec4(mix(a, b, vF), 1.0); }`,\n});",
+    "sourceUrl": "scene-foundry:seed/iridescent-tint"
+  },
+  {
+    "title": "Soft vertex displacement",
+    "category": "shaders",
+    "summary": "Offset sphere vertices along normals with a small sine field so the silhouette stays smooth.",
+    "codeSnippet": "const warp = new THREE.ShaderMaterial({\n  uniforms: { time: { value: 0 }, color: { value: new THREE.Color(0x9fe870) } },\n  vertexShader: `uniform float time; varying float vD; void main(){ float d = sin(position.y * 6.0 + time) * 0.06; vD = d; vec3 p = position + normal * d; gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,\n  fragmentShader: `uniform vec3 color; varying float vD; void main(){ gl_FragColor = vec4(color * (0.8 + vD * 2.0), 1.0); }`,\n});\ngsap.to(warp.uniforms.time, { value: Math.PI * 2, duration: 6, repeat: -1, ease: 'none' });",
+    "sourceUrl": "scene-foundry:seed/soft-displace"
+  },
+  {
+    "title": "Animated shader uniform",
+    "category": "shaders",
+    "summary": "Drive a material uniform with GSAP instead of mutating geometry every frame.",
+    "codeSnippet": "material.uniforms.pulse = { value: 0 };\ngsap.to(material.uniforms.pulse, { value: 1, duration: 2.4, yoyo: true, repeat: -1, ease: 'sine.inOut' });",
+    "sourceUrl": "scene-foundry:seed/uniform-pulse"
+  },
+  {
+    "title": "Matcap-free glossy plastic",
+    "category": "materials",
+    "summary": "A MeshPhysicalMaterial with modest clearcoat and low roughness for a glass-adjacent planet without transmission cost.",
+    "codeSnippet": "const shell = new THREE.MeshPhysicalMaterial({\n  color: 0xb9e7ff,\n  roughness: 0.18,\n  metalness: 0.05,\n  clearcoat: 0.7,\n  clearcoatRoughness: 0.2,\n});",
+    "sourceUrl": "scene-foundry:seed/glossy-plastic"
+  },
+  {
+    "title": "Thin glass globe",
+    "category": "materials",
+    "summary": "Transmission on a sphere for a glass planet; keep thickness low and env intensity modest so lighting stays stable in motion.",
+    "codeSnippet": "const glass = new THREE.MeshPhysicalMaterial({\n  color: 0xffffff,\n  transmission: 0.9,\n  thickness: 0.35,\n  roughness: 0.08,\n  ior: 1.4,\n  transparent: true,\n});",
+    "sourceUrl": "scene-foundry:seed/thin-glass"
+  },
+  {
+    "title": "Warm emissive sun core",
+    "category": "materials",
+    "summary": "Use emissive color instead of a point light for the sun disc so the core stays bright while orbiting lights remain separate.",
+    "codeSnippet": "const sunMat = new THREE.MeshStandardMaterial({\n  color: 0xffb347,\n  emissive: 0xff8a2b,\n  emissiveIntensity: 2.2,\n  roughness: 0.4,\n});",
+    "sourceUrl": "scene-foundry:seed/emissive-sun"
+  },
+  {
+    "title": "Layered atmosphere shell",
+    "category": "materials",
+    "summary": "A slightly larger transparent sphere with additive blending suggests haze around a globe.",
+    "codeSnippet": "const haze = new THREE.Mesh(\n  new THREE.SphereGeometry(1.06, 48, 32),\n  new THREE.MeshBasicMaterial({ color: 0x7ecbff, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, side: THREE.BackSide }),\n);\nglobe.add(haze);",
+    "sourceUrl": "scene-foundry:seed/atmosphere-shell"
+  },
+  {
+    "title": "Warm key, cool fill",
+    "category": "lighting",
+    "summary": "Oppose a warm directional key with a cool hemisphere fill so materials read during camera motion.",
+    "codeSnippet": "scene.add(new THREE.HemisphereLight(0xc9e4ff, 0x241820, 0.7));\nconst key = new THREE.DirectionalLight(0xffe1b5, 1.6);\nkey.position.set(2.5, 3, 1.5);\nscene.add(key);",
+    "sourceUrl": "scene-foundry:seed/warm-cool"
+  },
+  {
+    "title": "Stable orbit lighting",
+    "category": "lighting",
+    "summary": "Keep lights in world space, not parented to the orbiting globe, so exposure does not strobe during revolution.",
+    "codeSnippet": "const sunLight = new THREE.PointLight(0xffd18a, 8, 12, 2);\nsunLight.position.set(0, 0, 0);\nscene.add(sunLight);\n// globe.position is on an orbit group; do not add sunLight to that group",
+    "sourceUrl": "scene-foundry:seed/stable-orbit-light"
+  },
+  {
+    "title": "Soft rim light",
+    "category": "lighting",
+    "summary": "A dim backlight opposite the key separates a dark globe from the background.",
+    "codeSnippet": "const rim = new THREE.DirectionalLight(0x9ad7ff, 0.55);\nrim.position.set(-3, 0.5, -2);\nscene.add(rim);",
+    "sourceUrl": "scene-foundry:seed/rim-light"
+  },
+  {
+    "title": "Avoid light intensity pops",
+    "category": "lighting",
+    "summary": "If intensity must change, tween it with sine.inOut; never snap intensity in the critic clip.",
+    "codeSnippet": "gsap.to(key, { intensity: 1.8, duration: 2, ease: 'sine.inOut', yoyo: true, repeat: -1 });",
+    "sourceUrl": "scene-foundry:seed/tween-intensity"
+  },
+  {
+    "title": "Pointer raycast hover",
+    "category": "interaction",
+    "summary": "Raycast from normalized pointer coords and ease a hover scale; ignore events after destroy.",
+    "codeSnippet": "const raycaster = new THREE.Raycaster();\nconst pointer = new THREE.Vector2();\naddEventListener('pointermove', (event) => {\n  pointer.x = (event.clientX / innerWidth) * 2 - 1;\n  pointer.y = -(event.clientY / innerHeight) * 2 + 1;\n  raycaster.setFromCamera(pointer, camera);\n  const hit = raycaster.intersectObject(globe).length > 0;\n  gsap.to(globe.scale, { x: hit ? 1.06 : 1, y: hit ? 1.06 : 1, z: hit ? 1.06 : 1, duration: 0.25, ease: 'power2.out' });\n});",
+    "sourceUrl": "scene-foundry:seed/raycast-hover"
+  },
+  {
+    "title": "Reduced-motion camera lock",
+    "category": "interaction",
+    "summary": "Skip looping camera tweens when the user prefers reduced motion.",
+    "codeSnippet": "const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;\nif (!reduce) {\n  gsap.to(camera.position, { z: 3.2, duration: 3, ease: 'power2.inOut' });\n}",
+    "sourceUrl": "scene-foundry:seed/reduced-motion"
+  },
+  {
+    "title": "Foundry preview control listener",
+    "category": "interaction",
+    "summary": "Honor host studio messages for speed, hue, and wireframe without extra routers.",
+    "codeSnippet": "addEventListener('message', (event) => {\n  const data = event.data;\n  if (!data || data.type !== 'scene-foundry:controls') return;\n  const controls = data.controls ?? {};\n  if (typeof controls.speed === 'number') gsap.globalTimeline.timeScale(controls.speed);\n  if (typeof controls.hue === 'number') renderer.domElement.style.filter = `hue-rotate(${controls.hue}deg)`;\n  if (typeof controls.wireframe === 'boolean') {\n    scene.traverse((obj) => { if (obj.isMesh) obj.material.wireframe = controls.wireframe; });\n  }\n});",
+    "sourceUrl": "scene-foundry:seed/preview-controls"
+  },
+  {
+    "title": "Cap pixel ratio",
+    "category": "performance",
+    "summary": "Clamp devicePixelRatio so retina screens do not double fragment cost on a simple globe.",
+    "codeSnippet": "renderer.setPixelRatio(Math.min(devicePixelRatio, 2));",
+    "sourceUrl": "scene-foundry:seed/pixel-ratio"
+  },
+  {
+    "title": "Bounded geometry density",
+    "category": "performance",
+    "summary": "Use 48–64 sphere segments for a hero globe; denser meshes rarely read at this scale.",
+    "codeSnippet": "const globeGeo = new THREE.SphereGeometry(1, 64, 48);\nconst hazeGeo = new THREE.SphereGeometry(1.05, 32, 24);",
+    "sourceUrl": "scene-foundry:seed/segment-budget"
+  },
+  {
+    "title": "Dispose unused GPU resources",
+    "category": "performance",
+    "summary": "If a generated scene replaces meshes, dispose geometry and materials to avoid leaking across reloads.",
+    "codeSnippet": "function disposeMesh(mesh) {\n  mesh.geometry.dispose();\n  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];\n  for (const mat of mats) mat.dispose();\n}",
+    "sourceUrl": "scene-foundry:seed/dispose-mesh"
+  },
+  {
+    "title": "Tone mapping for mixed lights",
+    "category": "rendering",
+    "summary": "ACES tone mapping plus a modest exposure keeps a warm sun and cool globe from clipping during motion.",
+    "codeSnippet": "renderer.outputColorSpace = THREE.SRGBColorSpace;\nrenderer.toneMapping = THREE.ACESFilmicToneMapping;\nrenderer.toneMappingExposure = 1.05;",
+    "sourceUrl": "scene-foundry:seed/aces-tone"
+  },
+  {
+    "title": "Alpha background for studio iframe",
+    "category": "rendering",
+    "summary": "Enable renderer alpha and a transparent scene background so the host preview paper shows around the globe.",
+    "codeSnippet": "const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });\nscene.background = null;",
+    "sourceUrl": "scene-foundry:seed/alpha-iframe"
+  },
+  {
+    "title": "Camera near far for a unit globe",
+    "category": "rendering",
+    "summary": "Keep near around 0.1 and far under 100 so a close drift does not clip the sphere.",
+    "codeSnippet": "const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 80);\ncamera.position.set(0, 0.2, 4);",
+    "sourceUrl": "scene-foundry:seed/near-far"
+  },
+  {
+    "title": "Semantic DOM mirrored into WebGL text",
+    "category": "rendering",
+    "summary": "Keep readable HTML as the source of truth, then mirror its text and measured layout into a WebGL layer after fonts load. This preserves responsive semantics while enabling custom visual treatments.",
+    "codeSnippet": "await document.fonts.ready;\nconst source = document.querySelector('[data-webgl-text]');\nif (source) {\n  const visual = new Text();\n  visual.text = source.textContent?.trim() ?? '';\n  visual.font = '/fonts/display.woff2';\n  visual.sync();\n  syncVisualBounds(visual, source.getBoundingClientRect());\n}",
+    "sourceUrl": "https://tympanus.net/codrops/2025/06/05/how-to-create-responsive-and-seo-friendly-webgl-text/"
+  },
+  {
+    "title": "Single-progress WebGL hover mask",
+    "category": "interaction",
+    "summary": "Drive a WebGL card takeover from a single normalized progress value, letting an original shader mask shape the edge while DOM input handlers control the transition.",
+    "codeSnippet": "const state = { reveal: 0 };\nconst transition = gsap.to(state, {\n  reveal: 1,\n  duration: 0.65,\n  ease: 'power3.inOut',\n  paused: true,\n  onUpdate: () => { material.uniforms.uReveal.value = state.reveal; },\n});\ncard.addEventListener('pointerenter', () => transition.play());\ncard.addEventListener('pointerleave', () => transition.reverse());",
+    "sourceUrl": "https://github.com/codrops/LookbookHoverEffects"
+  },
+  {
+    "title": "Scroll progress drives a section seam",
+    "category": "animations",
+    "summary": "Bind a bounded shader mask or texture blend to scroll progress so the edge between adjacent sections responds directly to scrolling rather than running on an unrelated timer.",
+    "codeSnippet": "gsap.to(material.uniforms.uProgress, {\n  value: 1,\n  ease: 'none',\n  scrollTrigger: {\n    trigger: section,\n    start: 'top top',\n    end: 'bottom top',\n    scrub: true,\n  },\n});",
+    "sourceUrl": "https://github.com/codrops/SeamTransitions"
+  },
+  {
+    "title": "Motion personality with accessible states",
+    "category": "animations",
+    "summary": "Define a motion brief once and give each animated element an intro, settled state, and optional outro. Ongoing motion needs pause/replay controls, stable layout, and a complete reduced-motion alternative.",
+    "codeSnippet": "const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;\nif (reduceMotion) {\n  intro.progress(1).pause();\n} else {\n  intro.play();\n}\npauseButton.addEventListener('click', () => {\n  timeline.paused(!timeline.paused());\n});",
+    "sourceUrl": "https://tympanus.net/codrops/2026/10/26/animating-agents-gsap-animaxxing/"
+  },
+  {
+    "title": "Typed event subscriptions with teardown",
+    "category": "interaction",
+    "summary": "Keep input, audio, and scene responses loosely coupled with typed domain events, and retain an unsubscribe function so listeners cannot outlive their owning feature.",
+    "codeSnippet": "const stopListening = events.on('input:activate', (payload) => {\n  scene.activate(payload.id);\n});\n\nfunction destroy() {\n  stopListening();\n}",
+    "sourceUrl": "https://tympanus.net/codrops/2026/10/27/songs-of-hyrule-from-a-fans-idea-to-a-three-js-mini-game-in-a-few-days/"
+  }
+]

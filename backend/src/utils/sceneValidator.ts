@@ -8,7 +8,9 @@ export interface SceneDiagnostic {
 
 const MAX_HTML_LENGTH = 500_000;
 
-export function validateSceneHtml(html: string): SceneDiagnostic[] {
+export type SceneRenderMode = 'dom' | 'webgl';
+
+export function validateSceneHtml(html: string, renderMode: SceneRenderMode = 'dom'): SceneDiagnostic[] {
   const diagnostics: SceneDiagnostic[] = [];
   const normalized = html.toLowerCase();
 
@@ -44,11 +46,17 @@ export function validateSceneHtml(html: string): SceneDiagnostic[] {
   if (normalized.includes('window.top') || normalized.includes('window.parent.location')) {
     diagnostics.push(error('PARENT_NAVIGATION_FORBIDDEN', 'Generated scenes cannot control the parent window.'));
   }
-  if (!/three(?:\.module)?(?:\.min)?\.js|from\s+["'][^"']*three/i.test(html)) {
-    diagnostics.push(warning('THREE_IMPORT_NOT_DETECTED', 'No recognizable Three.js import was detected.'));
+  if (renderMode === 'webgl' && !/three(?:\.module)?(?:\.min)?\.js|from\s+["'][^"']*three/i.test(html)) {
+    diagnostics.push(error('THREE_IMPORT_MISSING', 'WebGL mode requires a recognizable Three.js import.'));
   }
   if (!/gsap(?:\.min)?\.js|from\s+["'][^"']*gsap/i.test(html)) {
-    diagnostics.push(warning('GSAP_IMPORT_NOT_DETECTED', 'No recognizable GSAP import was detected.'));
+    diagnostics.push(error('GSAP_IMPORT_MISSING', 'The generated file must import GSAP.'));
+  }
+  if (!/\bgsap\s*\.\s*(?:timeline|to|from|fromTo)\s*\(/i.test(html)) {
+    diagnostics.push(error('ANIMATION_CODE_MISSING', 'The generated file must contain executable GSAP animation code.'));
+  }
+  if (renderMode === 'webgl' && !/\bWebGLRenderer\s*\(/i.test(html)) {
+    diagnostics.push(error('WEBGL_RENDERER_MISSING', 'WebGL mode requires a Three.js WebGLRenderer.'));
   }
 
   return diagnostics;

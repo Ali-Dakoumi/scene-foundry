@@ -69,6 +69,26 @@ test('returns an empty JSON array when no stored techniques are available', () =
   assert.equal(formatKnowledgeContext([]), '[]');
 });
 
+test('snippet matches raise rank when title and summary are generic', () => {
+  const selected = selectRelevantTechniques([
+    {
+      title: 'Generic helper',
+      category: 'other',
+      summary: 'Utility notes.',
+      codeSnippet: 'const fresnel = pow(1.0 - ndotv, 3.0);',
+      sourceUrl: 'https://example.com/a',
+    },
+    {
+      title: 'Orbit camera',
+      category: 'animations',
+      summary: 'Move around a subject.',
+      codeSnippet: 'camera.position.set(0, 0, 5);',
+      sourceUrl: 'https://example.com/b',
+    },
+  ], ['fresnel']);
+  assert.deepEqual(selected.map(({ title }) => title), ['Generic helper']);
+});
+
 test('category filter returns only animation techniques when asked', () => {
   const selected = filterTechniquesByCategory(techniques, ['animations']);
   assert.deepEqual(selected.map(({ title }) => title), ['Scroll-linked typography']);

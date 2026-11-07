@@ -1,6 +1,6 @@
 import type { Browser, Page } from 'puppeteer';
 import { launchSceneBrowser } from './browser.js';
-import type { SceneDiagnostic } from './sceneValidator.js';
+import type { SceneDiagnostic, SceneRenderMode } from './sceneValidator.js';
 
 export type { SceneDiagnostic };
 
@@ -9,7 +9,7 @@ export interface SceneRenderResult {
   diagnostics: SceneDiagnostic[];
 }
 
-export async function renderScene(htmlContent: string): Promise<SceneRenderResult> {
+export async function renderScene(htmlContent: string, renderMode: SceneRenderMode = 'dom'): Promise<SceneRenderResult> {
   let browser: Browser | null = null;
 
   try {
@@ -19,7 +19,7 @@ export async function renderScene(htmlContent: string): Promise<SceneRenderResul
     await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
     await page.setContent(htmlContent, { waitUntil: 'domcontentloaded', timeout: 15_000 });
     await new Promise((resolve) => setTimeout(resolve, 2_500));
-    diagnostics.push(...await inspectRenderedScene(page));
+    diagnostics.push(...await inspectRenderedScene(page, renderMode));
     const screenshotBase64 = await page.screenshot({ encoding: 'base64', type: 'png' });
     return { screenshotBase64, diagnostics: deduplicateDiagnostics(diagnostics) };
   } finally {
@@ -61,7 +61,7 @@ export function collectPageDiagnostics(page: Page): SceneDiagnostic[] {
   return diagnostics;
 }
 
-export async function inspectRenderedScene(page: Page): Promise<SceneDiagnostic[]> {
+export async function inspectRenderedScene(page: Page, renderMode: SceneRenderMode = 'dom'): Promise<SceneDiagnostic[]> {
   const result = await page.evaluate(() => {
     const canvases = Array.from(document.querySelectorAll('canvas'));
     const visibleCanvases = canvases.filter((canvas) => {
@@ -75,12 +75,12 @@ export async function inspectRenderedScene(page: Page): Promise<SceneDiagnostic[
   });
 
   const diagnostics: SceneDiagnostic[] = [];
-  if (!result.webglAvailable) {
+  if (renderMode === 'webgl' && !result.webglAvailable) {
     diagnostics.push({ severity: 'error', code: 'WEBGL_UNAVAILABLE', message: 'WebGL is unavailable in the render environment.' });
   }
-  if (result.canvasCount === 0) {
+  if (renderMode === 'webgl' && result.canvasCount === 0) {
     diagnostics.push({ severity: 'error', code: 'CANVAS_MISSING', message: 'The rendered scene did not create a canvas.' });
-  } else if (result.visibleCanvasCount === 0) {
+  } else if (renderMode === 'webgl' && result.visibleCanvasCount === 0) {
     diagnostics.push({ severity: 'error', code: 'CANVAS_HIDDEN', message: 'The generated canvas is not visible or has zero size.' });
   }
   return diagnostics;
