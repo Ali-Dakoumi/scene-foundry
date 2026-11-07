@@ -15,15 +15,16 @@ export function getSystemBrowserPath(): string | undefined {
   return windowsBrowserPaths.find((candidate) => existsSync(candidate));
 }
 
-export async function launchSceneBrowser(): Promise<Browser> {
+export async function launchSceneBrowser(options: { interactive?: boolean } = {}): Promise<Browser> {
   const executablePath = getSystemBrowserPath();
-  const options: LaunchOptions = {
-    headless: true,
+  const launchOptions: LaunchOptions = {
+    headless: options.interactive ? false : true,
     args: [
       '--disable-dev-shm-usage',
       '--autoplay-policy=no-user-gesture-required',
+      '--window-size=1280,720',
     ],
   };
-  if (executablePath) options.executablePath = executablePath;
-  return puppeteer.launch(options);
+  if (executablePath) launchOptions.executablePath = executablePath;
+  return puppeteer.launch(launchOptions);
 }

@@ -40,6 +40,7 @@ export interface VisualExplorationResult {
   sourceUrl: string; finalUrl: string; title: string; durationMs: number; videoPath: string;
   actions: ExplorationAction[]; report: VisualAnalysisReport;
 }
+export interface VisualExplorationOptions { interactive?: boolean; challengeWaitMs?: number }
 interface PageSnapshot {
   viewport: string; documentHeight: number; headings: string[]; landmarks: string[];
   interactiveElements: string[]; fonts: string[]; colors: string[];
@@ -76,12 +77,32 @@ async function isChallengePage(page: Page): Promise<boolean> {
   })()`));
 }
 
-async function loadExplorablePage(page: Page, source: URL): Promise<{ finalUrl: string; usedFallback: boolean }> {
+async function waitForChallengeCompletion(page: Page, waitMs: number): Promise<boolean> {
+  console.log(`--> Verification detected. Complete it in the browser window (${Math.ceil(waitMs / 1_000)}s timeout).`);
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    if (!await isChallengePage(page)) {
+      await page.waitForNetworkIdle({ idleTime: 500, timeout: 8_000 }).catch(() => undefined);
+      return true;
+    }
+  }
+  return false;
+}
+
+async function loadExplorablePage(
+  page: Page,
+  source: URL,
+  options: VisualExplorationOptions,
+): Promise<{ finalUrl: string; usedFallback: boolean }> {
   const codePenEmbed = codePenEmbedUrl(source);
   const initialTarget = codePenEmbed ?? source;
   await page.goto(initialTarget.toString(), { waitUntil: 'domcontentloaded', timeout: 25_000 });
   await new Promise((resolve) => setTimeout(resolve, 700));
   if (!await isChallengePage(page)) {
+    return { finalUrl: normalizePublicUrl(page.url()).toString(), usedFallback: Boolean(codePenEmbed) };
+  }
+  if (options.interactive && await waitForChallengeCompletion(page, options.challengeWaitMs ?? 90_000)) {
     return { finalUrl: normalizePublicUrl(page.url()).toString(), usedFallback: Boolean(codePenEmbed) };
   }
   if (codePenEmbed) {
@@ -167,7 +188,10 @@ The attached frames are chronological. Produce a detailed report covering hierar
   });
 }
 
-export async function exploreAndAnalyseUrl(rawUrl: string): Promise<VisualExplorationResult> {
+export async function exploreAndAnalyseUrl(
+  rawUrl: string,
+  options: VisualExplorationOptions = {},
+): Promise<VisualExplorationResult> {
   const sourceUrl = normalizePublicUrl(rawUrl).toString();
   let browser: Browser | null = null;
   let recorder: InstanceType<typeof PuppeteerScreenRecorder> | null = null;
@@ -175,10 +199,10 @@ export async function exploreAndAnalyseUrl(rawUrl: string): Promise<VisualExplor
   await mkdir(uploadsDirectory, { recursive: true });
   const videoPath = path.join(uploadsDirectory, `${randomUUID()}-exploration.mp4`);
   try {
-    browser = await launchSceneBrowser();
+    browser = await launchSceneBrowser({ interactive: options.interactive === true });
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
-    const loaded = await loadExplorablePage(page, new URL(sourceUrl));
+    const loaded = await loadExplorablePage(page, new URL(sourceUrl), options);
     const finalUrl = loaded.finalUrl;
     const title = await page.title();
     const target = interactionTarget(page);
